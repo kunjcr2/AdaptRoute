@@ -1,0 +1,1 @@
+All the adapters will be stored here.
