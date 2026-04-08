@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", sans-serif;
+  --font-serif: "Playfair Display", serif;
+  
+  --color-brand-50: #fcfcfd;
+  --color-brand-100: #f4f4f7;
+  --color-brand-200: #e5e5ec;
+  --color-brand-300: #d0d0df;
+  --color-brand-400: #b1b1c6;
+  --color-brand-500: #8c8cab;
+  --color-brand-600: #6b6b85;
+  --color-brand-700: #55556a;
+  --color-brand-800: #464657;
+  --color-brand-900: #3a3a47;
+  --color-brand-950: #26262f;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-brand-50);
+    background-image: 
+      radial-gradient(at 0% 0%, hsla(253, 30%, 95%, 1) 0px, transparent 50%),
+      radial-gradient(at 100% 0%, hsla(220, 30%, 95%, 1) 0px, transparent 50%),
+      radial-gradient(at 50% 100%, hsla(300, 30%, 96%, 1) 0px, transparent 50%);
+    background-attachment: fixed;
+    color: var(--color-brand-900);
+  }
+}
