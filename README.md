@@ -101,11 +101,10 @@ At inference, the gate probabilities are used as weights to blend these adapters
 
 | Dataset | Label | Source |
 |---|---|---|
-| `ought/raft` | multi-class | Ready-made task classification benchmark |
-| `codeparrot/github-code` (2k sample) | `code` | Labeled and added to training set |
-| `lighteval/MATH` (2k sample) | `math` | Competition math problems |
-| `rajpurkar/squad` (2k sample) | `QA` | Wikipedia Q&A |
-| `cnn_dailymail` (2k sample) | `summarization` | News article summaries |
+| `codeparrot/github-code` (7k sample) | `code` | Labeled and added to training set |
+| `lighteval/MATH` (7k sample) | `math` | Competition math problems |
+| `rajpurkar/squad` (10k sample) | `QA` | Wikipedia Q&A |
+| `mal.json` (7.5k sample) | `prompt injection` | Prompt injection prompts |
 
 ### LoRA Adapter SFT
 
@@ -114,7 +113,7 @@ At inference, the gate probabilities are used as weights to blend these adapters
 | `lora-code` | `iamtarun/python_code_instructions_18k_alpaca` | 18k instruction-response pairs |
 | `lora-math` | `lighteval/MATH` | 7.5k problems with step-by-step solutions |
 | `lora-qa` | `rajpurkar/squad_v2` | 130k Q&A pairs |
-| `lora-summarization` | `cnn_dailymail` (10k sample) | Article + highlight pairs |
+| `lora-prompt-injection` | `mal.json` (7.5k sample) | Prompt injection prompts |
 
 All datasets are loaded from the HuggingFace Hub via `load_dataset()` — no manual downloads needed.
 
