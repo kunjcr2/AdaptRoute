@@ -21,7 +21,7 @@ User query
 ┌─────────────────────────────────────────────┐
 │          Gating network (DistilBERT)        │
 │                                             │
-│  p(code), p(math), p(QA), p(summarization) │  <- task routing
+│  p(code), p(math), p(QA), p(medical) │  <- task routing
 │  p(injection) -> BLOCK if above threshold  │  <- firewall
 └─────────────────────────────────────────────┘
     │
@@ -70,7 +70,7 @@ Loaded in 4-bit NF4 quantization via `bitsandbytes`. Weights are fully frozen. O
 
 A multiclass classifier built on `distilbert-base-uncased`. Takes the raw user query as input and outputs a softmax distribution over 6 classes — five task types plus one security class.
 
-**Classes:** `code` · `math` · `QA` · `summarization` · `general` · `injection`
+**Classes:** `code` · `math` · `QA` · `medical` · `general` · `injection`
 
 **Why DistilBERT:** 66M parameters, ~5ms inference on CPU. On an edge device the gate runs before every single query — it must add near-zero latency or it becomes the bottleneck.
 
@@ -89,7 +89,7 @@ Four domain-specific adapters trained via SFT on the base model. Each adapter is
 | `lora-code` | Python code generation and explanation |
 | `lora-math` | Step-by-step mathematical reasoning |
 | `lora-qa` | Grounded question answering from context |
-| `lora-summarization` | News and document summarization |
+| `lora-medical` | Clinical triage and medical Q&A |
 
 At inference, the gate probabilities are used as weights to blend these adapters via `peft`'s `add_weighted_adapter()`. The merged adapter is loaded onto the frozen base model for the forward pass.
 
@@ -101,21 +101,23 @@ At inference, the gate probabilities are used as weights to blend these adapters
 
 | Dataset | Label | Source |
 |---|---|---|
-| `codeparrot/github-code` (7k sample) | `code` | Labeled and added to training set |
-| `lighteval/MATH` (7k sample) | `math` | Competition math problems |
-| `rajpurkar/squad` (10k sample) | `QA` | Wikipedia Q&A |
-| `mal.json` (7.5k sample) | `prompt injection` | Prompt injection prompts |
+| `code.json` (~10k sample) | `code` | `codeparrot/github-code` |
+| `math.json` (~10k sample) | `math` | `lighteval/MATH` |
+| `qa.json` (~10k sample) | `QA` | `rajpurkar/squad` |
+| `medical.json` (~10k sample) | `medical` | `lavita/ChatDoctor-HealthCareMagic-100k` |
+| `mal.json` (~7.5k sample) | `prompt injection` | Prompt injection prompts |
 
 ### LoRA Adapter SFT
 
 | Adapter | Dataset | Size |
 |---|---|---|
-| `lora-code` | `iamtarun/python_code_instructions_18k_alpaca` | 18k instruction-response pairs |
-| `lora-math` | `lighteval/MATH` | 7.5k problems with step-by-step solutions |
-| `lora-qa` | `rajpurkar/squad_v2` | 130k Q&A pairs |
-| `lora-prompt-injection` | `mal.json` (7.5k sample) | Prompt injection prompts |
+| `lora-code` | `code.json` | ~10k instruction-response pairs |
+| `lora-math` | `math.json` | ~10k problems with step-by-step solutions |
+| `lora-qa` | `qa.json` | ~10k Q&A pairs |
+| `lora-medical` | `medical.json` | ~10k clinical Q&A pairs |
+| `lora-prompt-injection` | `mal.json` | 7.5k prompt injection prompts |
 
-All datasets are loaded from the HuggingFace Hub via `load_dataset()` — no manual downloads needed.
+All datasets are loaded locally as JSON files from the `datasets/` directory.
 
 ---
 
@@ -157,7 +159,7 @@ from peft import PeftModel
 
 # Gate outputs softmax probabilities
 probs = gate_model(query)
-# e.g. {"code": 0.72, "math": 0.21, "qa": 0.05, "summarization": 0.02}
+# e.g. {"code": 0.72, "math": 0.21, "qa": 0.05, "medical": 0.02}
 
 # Take top-2 adapters and their weights
 top_adapters = ["lora-code", "lora-math"]
@@ -266,7 +268,7 @@ python gate/train_gate.py
 python adapters/train_adapter.py --domain code
 python adapters/train_adapter.py --domain math
 python adapters/train_adapter.py --domain qa
-python adapters/train_adapter.py --domain summarization
+python adapters/train_adapter.py --domain medical
 
 # 4. Run the demo
 python demo/app.py
@@ -302,6 +304,6 @@ The tradeoff is that AdaptRoute's gate is not trained to minimize the same loss 
 - [iamtarun/python_code_instructions_18k_alpaca](https://huggingface.co/datasets/iamtarun/python_code_instructions_18k_alpaca)
 - [lighteval/MATH](https://huggingface.co/datasets/lighteval/MATH)
 - [rajpurkar/squad_v2](https://huggingface.co/datasets/rajpurkar/squad_v2)
-- [cnn_dailymail](https://huggingface.co/datasets/cnn_dailymail)
+- [lavita/ChatDoctor-HealthCareMagic-100k](https://huggingface.co/datasets/lavita/ChatDoctor-HealthCareMagic-100k)
 - [deepset/prompt-injections](https://huggingface.co/datasets/deepset/prompt-injections)
 - [xTRam1/safe-guard-prompt-injection](https://huggingface.co/datasets/xTRam1/safe-guard-prompt-injection)
