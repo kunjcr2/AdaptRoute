@@ -40,7 +40,7 @@ const Architecture = () => {
               <p className="text-brand-600 text-sm mb-6">66M parameters • ~5ms cpu inference</p>
               
               <div className="flex justify-center gap-3 mb-6">
-                 {['p(code)', 'p(math)', 'p(QA)', 'p(summarize)'].map(t => (
+                 {['p(code)', 'p(math)', 'p(QA)', 'p(medical)'].map(t => (
                    <span key={t} className="bg-brand-50 text-brand-700 font-mono text-xs px-3 py-1.5 rounded-lg border border-brand-100">{t}</span>
                  ))}
               </div>
@@ -78,7 +78,7 @@ const Architecture = () => {
             </p>
             <h3 className="font-serif text-3xl font-bold mb-6 mt-12 text-brand-900">Expert Adapters</h3>
             <p className="text-brand-600 leading-relaxed">
-              Four domain-specific adapters (`lora-code`, `lora-math`, `lora-qa`, `lora-summarization`) trained via SFT. At rank 8, each adapter is incredibly light—costing less than 200MB to store all four domains concurrently.
+              Four domain-specific adapters (`lora-code`, `lora-math`, `lora-qa`, `lora-medical`) trained via SFT. At rank 8, each adapter is incredibly light—costing less than 200MB to store all four domains concurrently.
             </p>
           </div>
           <div className="bg-white p-8 rounded-3xl border border-brand-100 shadow-lg">

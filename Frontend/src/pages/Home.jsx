@@ -45,7 +45,7 @@ const Home = () => {
           <div className="max-w-3xl mx-auto text-center mb-16">
             <h2 className="font-serif text-4xl font-bold mb-6 text-brand-900">Why AdaptRoute?</h2>
             <p className="text-lg text-brand-600 font-light leading-relaxed">
-              Small language models (SLMs) are essential for edge deployment, but they natively struggle as generalists. <strong>They are simply not powerful enough to excel simultaneously at vastly different tasks like writing code, solving math, summarizing English documents, and answering domain-specific queries.</strong>
+              Small language models (SLMs) are essential for edge deployment, but they natively struggle as generalists. <strong>They are simply not powerful enough to excel simultaneously at vastly different tasks like writing code, solving math, medical triage, and answering domain-specific queries.</strong>
               <br /><br />
               AdaptRoute solves this. By dynamically attaching lightweight LoRA adapters at inference time, it gives these models the specialized expertise they need exactly when they need it—all with <em>minimal latency overhead</em>.
             </p>

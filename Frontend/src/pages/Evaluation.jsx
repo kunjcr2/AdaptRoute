@@ -53,10 +53,10 @@ const Evaluation = () => {
               <div>
                 <h4 className="font-bold text-brand-800 mb-2">Gate Training</h4>
                 <div className="flex flex-wrap gap-2 text-sm">
-                  <span className="px-3 py-1 bg-brand-50 border border-brand-200 rounded-full">ought/raft</span>
                   <span className="px-3 py-1 bg-brand-50 border border-brand-200 rounded-full">github-code</span>
                   <span className="px-3 py-1 bg-brand-50 border border-brand-200 rounded-full">MATH</span>
                   <span className="px-3 py-1 bg-brand-50 border border-brand-200 rounded-full">squad</span>
+                  <span className="px-3 py-1 bg-brand-50 border border-brand-200 rounded-full">ChatDoctor-HealthCareMagic</span>
                   <span className="px-3 py-1 bg-brand-50 border border-brand-200 rounded-full">prompt-injections</span>
                 </div>
               </div>
@@ -66,7 +66,7 @@ const Evaluation = () => {
                   <span className="px-3 py-1 bg-brand-50 border border-brand-200 rounded-full">python_code_instructions</span>
                   <span className="px-3 py-1 bg-brand-50 border border-brand-200 rounded-full">MATH</span>
                   <span className="px-3 py-1 bg-brand-50 border border-brand-200 rounded-full">squad_v2</span>
-                  <span className="px-3 py-1 bg-brand-50 border border-brand-200 rounded-full">cnn_dailymail</span>
+                  <span className="px-3 py-1 bg-brand-50 border border-brand-200 rounded-full">ChatDoctor-HealthCareMagic</span>
                 </div>
               </div>
             </div>
