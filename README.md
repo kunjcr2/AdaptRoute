@@ -19,6 +19,14 @@ User query
     │
     ▼
 ┌─────────────────────────────────────────────┐
+│          Firewall (DistilBERT)              │
+│                                             │
+│  Binary: [Clear] | [Malicious/OOD]          │  <- input filtering
+└─────────────────────────────────────────────┘
+    │
+    │ (If Cleared)
+    ▼
+┌─────────────────────────────────────────────┐
 │          Gating network (DistilBERT)        │
 │                                             │
 │  p(code), p(math), p(qa), p(medical)        │  <- task routing
@@ -44,10 +52,11 @@ Response
 
 | Stage | What Happens | Estimated Time (A100) |
 |---|---|---|
-| 1. Gating network | Fine-tune DistilBERT as a 4-class task classifier | ~10 min |
-| 2. LoRA adapters | SFT one adapter per domain on top of the base SLM | ~25 min per adapter |
-| 3. Soft merge | Wire gate probabilities into `add_weighted_adapter()` | inference-time only |
-| 4. Eval + demo | Benchmark quality delta, build Gradio UI | ~1–2 hours |
+| 1. Firewall | Fine-tune DistilBERT for adversarial/OOD detection | ~10 min |
+| 2. Gating network | Fine-tune DistilBERT as a 4-class task classifier | ~10 min |
+| 3. LoRA adapters | SFT one adapter per domain on top of the base SLM | ~25 min per adapter |
+| 4. Soft merge | Wire gate probabilities into `add_weighted_adapter()` | inference-time only |
+| 5. Eval + demo | Benchmark quality delta, build Gradio UI | ~1–2 hours |
 
 ---
 
@@ -61,6 +70,16 @@ Response
 | `Phi-3-mini` | 3.8B | ~6 GB | Backup — stronger reasoning, slower to train |
 
 Loaded in 4-bit NF4 quantization via `bitsandbytes`. Weights are fully frozen. Only the LoRA adapters are trained.
+
+---
+
+### Firewall
+
+A binary classifier (also `distilbert-base-uncased`) that acts as the first line of defense. It identifies queries that are either adversarial (jailbreaks, prompt injections) or completely out-of-domain (OOD).
+
+**Model Path:** [kunjcr2/firewall-bert-adaptroute](https://huggingface.co/kunjcr2/firewall-bert-adaptroute)
+
+**Why a separate model:** By decoupling the firewall from the gating network, we can update security policies or adversarial training sets without retraining the task-specific routing logic. It ensures that the gating network only processes "clean" queries, improving overall system stability.
 
 ---
 
@@ -153,7 +172,12 @@ This is the key mechanism that makes AdaptRoute different from a simple classifi
 ```python
 from peft import PeftModel
 
-# Gate outputs softmax probabilities
+# 1. Firewall check (binary model)
+is_clean = firewall_model(query)
+if not is_clean:
+    return "Query blocked by firewall."
+
+# 2. Gate outputs softmax probabilities
 probs = gate_model(query)
 # e.g. {"code": 0.72, "math": 0.21, "qa": 0.05, "medical": 0.02}
 
