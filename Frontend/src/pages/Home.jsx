@@ -68,7 +68,7 @@ const Home = () => {
               {
                 icon: <Shield className="w-6 h-6" />,
                 title: "Injection Firewall",
-                desc: "The DistilBERT gate pre-filters queries, blocking prompt injections before generation occurs. Critical for systems with local tool access.",
+                desc: "A dedicated DistilBERT model pre-filters queries, blocking prompt injections before generation occurs. Decoupling the firewall ensures robust security for systems with local tool access.",
                 link: "/firewall"
               }
             ].map((feature, i) => (

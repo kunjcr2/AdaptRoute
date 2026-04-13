@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { GitMerge, BrainCircuit, Blocks } from 'lucide-react';
+import { GitMerge, BrainCircuit, Blocks, Shield } from 'lucide-react';
 
 const Architecture = () => {
   return (
@@ -29,6 +29,23 @@ const Architecture = () => {
               User Query
             </div>
             
+            <div className="h-10 w-px bg-brand-300"></div>
+
+            {/* Firewall */}
+            <div className="bg-white border-2 border-brand-200 w-full p-8 rounded-3xl text-center shadow-lg relative group hover:border-brand-400 transition-all">
+              <div className="flex items-center justify-center gap-3 mb-4">
+                <Shield className="w-6 h-6 text-brand-600" />
+                <div className="font-bold text-xl text-brand-900">Firewall (DistilBERT)</div>
+              </div>
+              <p className="text-brand-600 text-sm mb-6">Binary Classification</p>
+              
+              <div className="flex justify-center gap-3 mb-6">
+                 {['Clear', 'Malicious/OOD'].map(t => (
+                   <span key={t} className="bg-brand-50 text-brand-700 font-mono text-xs px-3 py-1.5 rounded-lg border border-brand-100">{t}</span>
+                 ))}
+              </div>
+            </div>
+
             <div className="h-10 w-px bg-brand-300"></div>
 
             {/* Gate */}
@@ -84,7 +101,13 @@ const Architecture = () => {
           <div className="bg-white p-8 rounded-3xl border border-brand-100 shadow-lg">
              <h3 className="font-serif text-2xl font-bold mb-6 text-brand-900">Soft Routing Mechanics</h3>
              <div className="bg-[#1e1e1e] rounded-xl p-6 overflow-x-auto text-sm font-mono text-gray-300 shadow-inner">
-<pre>{`probs = gate_model(query)
+<pre>{`# 1. Firewall check
+is_clean = firewall_model(query)
+if not is_clean:
+    return "Query blocked"
+
+# 2. Gate outputs probabilities
+probs = gate_model(query)
 
 top_adapters = ["lora-code", "lora-math"]
 top_weights  = [0.72, 0.21]
