@@ -67,7 +67,6 @@ Response
 | Model | Params | VRAM (4-bit) | Notes |
 |---|---|---|---|
 | `Qwen2.5-1.5B` | 1.5B | ~4 GB | Primary choice — fast SFT, strong instruction following |
-| `Phi-3-mini` | 3.8B | ~6 GB | Backup — stronger reasoning, slower to train |
 
 Loaded in 4-bit NF4 quantization via `bitsandbytes`. Weights are fully frozen. Only the LoRA adapters are trained.
 
