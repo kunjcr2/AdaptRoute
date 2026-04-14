@@ -124,14 +124,14 @@ At inference, the gate probabilities are used as weights to blend these adapters
 
 ### LoRA Adapter SFT
 
-| Adapter | Dataset | Size |
+| Adapter | Hugging Face Dataset | Size |
 |---|---|---|
-| `lora-code` | `code.json` | ~10k instruction-response pairs |
-| `lora-math` | `math.json` | ~10k problems with step-by-step solutions |
-| `lora-qa` | `qa.json` | ~10k Q&A pairs |
-| `lora-medical` | `medical.json` | ~10k clinical Q&A pairs |
+| `lora-code` | `iamtarun/python_code_instructions_18k_alpaca` | ~20k instruction-response pairs |
+| `lora-math` | `DigitalLearningGmbH/MATH-lighteval` | ~20k problems with step-by-step solutions |
+| `lora-qa` | `rajpurkar/squad` | ~20k Q&A pairs |
+| `lora-medical` | `lavita/ChatDoctor-HealthCareMagic-100k` | ~20k clinical Q&A pairs |
 
-All datasets are loaded locally as JSON files from the `datasets/` directory.
+LoRA SFT datasets are streamed dynamically via the Hugging Face Hub (no local JSONs required) with `N_SAMPLES = 20_000` each.
 
 ---
 
@@ -156,10 +156,10 @@ Same config applied to all four domain adapters.
 
 | Parameter | Value | Reason |
 |---|---|---|
-| rank (`r`) | `8` | Compact, fast to merge; sufficient capacity for domain shift at 1.5B |
-| alpha | `16` | 2× rank — standard stable scaling |
+| rank (`r`) | `16` | Increased from 8 to 16 for slightly greater capacity across domain variation |
+| alpha | `32` | 2× rank — standard stable scaling |
 | dropout | `0.05` | Light regularization for small dataset sizes |
-| target modules | `q, k, v, o` | Attention projections only — faster training |
+| target modules | `q_proj, k_proj, v_proj, o_proj` | Attention projections only — faster training |
 | precision | `BF16` | A100 native, stable for SFT |
 
 ---
@@ -231,7 +231,8 @@ adaproute/
 ├── demo/
 │   └── app.py                    # Gradio demo
 ├── notebooks/
-│   └── AdaptRoute.ipynb          # End-to-end walkthrough
+│   ├── AdaptRoute.ipynb          # End-to-end walkthrough
+│   └── Adapters_Training_v2.ipynb# Sequential LoRA SFT pipeline
 └── README.md
 ```
 
