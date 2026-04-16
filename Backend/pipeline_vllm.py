@@ -1,3 +1,5 @@
+# !pip install vllm -q
+
 import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import os
@@ -114,6 +116,8 @@ def load_all_models():
         trust_remote_code=True,
         gpu_memory_utilization=0.90,
         max_model_len=2048,
+        enforce_eager=True,       # skip CUDA graph compilation — fixes EngineDeadError with LoRA
+        max_num_seqs=1,           # single-user inference, no need for batching overhead
     )
 
     print("All models loaded. Ready.")
@@ -213,3 +217,24 @@ def process_query(query: str) -> dict:
         "gating_scores":     gating_scores,
         "time_taken_seconds": round(t_total, 2),
     }
+
+prepare()
+load_all_models()
+
+process_query("Write a function to convert a list into a dictionary with index as keys and values as values")
+
+from vllm import LLM, SamplingParams
+
+llm = LLM(
+    model="Qwen/Qwen2.5-1.5B",
+    dtype="bfloat16",
+    trust_remote_code=True,
+    enforce_eager=True,
+    enable_lora=True,
+    max_lora_rank=16,
+    max_loras=4,
+    gpu_memory_utilization=0.90,
+    max_model_len=2048,
+)
+out = llm.generate("Write hello world in Python", SamplingParams(max_tokens=50))
+print(out[0].outputs[0].text)
