@@ -1,3 +1,4 @@
+# pip install transformers peft bitsandbytes accelerate datasets huggingface_hub
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModelForSequenceClassification, BitsAndBytesConfig
 from peft import PeftModel, PeftConfig
@@ -76,12 +77,15 @@ def load_all_models():
     global_systems["gating_model"] = AutoModelForSequenceClassification.from_pretrained(GATING_MODEL).to(DEVICE)
     global_systems["gating_model"].eval()
 
-    # 3. Load Base Model (Native bfloat16 for A100 speed!)
-    print("Loading Base Model natively in bfloat16...")
+    # 3. Load Base Model — use PyTorch built-in SDPA (Flash Attention without any extra install)
+    # attn_implementation="sdpa" uses torch.nn.functional.scaled_dot_product_attention
+    # which hits Flash Attention kernels natively on A100 (PyTorch 2.0+, already on Colab)
+    print("Loading Base Model with SDPA attention (bfloat16)...")
     base_model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
+        attn_implementation="sdpa",
     ).to(DEVICE)
     # CRITICAL FIX for generation speed: use_cache must be True for inference
     base_model.config.use_cache = True
@@ -194,22 +198,29 @@ def process_query(query: str) -> dict:
     if im_end_id is not None and im_end_id != base_tokenizer.unk_token_id:
         stop_tokens.append(im_end_id)
 
-    with torch.no_grad():
+    # Math proofs repeat symbols/terms naturally — loosen the constraint for that domain
+    ngram_size = 7 if winning_domain == "math" else 5
+
+    base_model.merge_adapter()
+    with torch.inference_mode():
         out = base_model.generate(
             **enc,
-            max_new_tokens=256,
+            max_new_tokens=128,
             do_sample=False,
-            repetition_penalty=1.5,
+            use_cache=True,
+            no_repeat_ngram_size=ngram_size,
             pad_token_id=base_tokenizer.pad_token_id,
-            eos_token_id=stop_tokens
+            eos_token_id=stop_tokens,
         )
+    base_model.unmerge_adapter()
+
+    t_gen = time.time()
+    t_total = t_gen - t_start
 
     response = base_tokenizer.decode(
         out[0][enc["input_ids"].shape[1]:],
         skip_special_tokens=True
     ).strip()
-
-    t_total = t_gen - t_start
 
     print("\n--- INFERENCE PROFILING ---")
     print(f"Firewall Check:    {t_fw - t_start:.2f}s")
@@ -236,6 +247,6 @@ def process_query(query: str) -> dict:
 prepare()
 load_all_models()
 
-test_query = ""
+test_query = "Generate a python function to convert a list to a dictionary with index being the keys and values being values."
 result = process_query(test_query)
 print(result)
