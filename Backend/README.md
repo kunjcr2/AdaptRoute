@@ -72,7 +72,7 @@ Response:
 
 ### `POST /generate`
 
-Generate response with router.
+Generate response with router. **Returns BOTH base model response and adapted response side-by-side.**
 
 **Request body:**
 
@@ -87,6 +87,8 @@ Generate response with router.
 ```json
 {
   "status": "success",
+  "base_response": "List comprehension is a way to create lists in Python...",
+  "adapted_response": "In Python, list comprehensions provide a concise syntax for creating lists. For example: [x*2 for x in range(10)]",
   "adapter_used": "code",
   "gating_scores": {
     "code": 0.85,
@@ -95,9 +97,29 @@ Generate response with router.
     "medical": 0.02
   },
   "firewall_label": "SAFE",
-  "response": "In Python, list comprehension provides a concise syntax..."
+  "time_taken_seconds": 2.34
 }
 ```
+
+#### Response Fields
+
+| Field                | Description                                                         |
+| -------------------- | ------------------------------------------------------------------- |
+| `status`             | `success` or `blocked` or `error`                                   |
+| `base_response`      | Answer from 1.5B model alone (no adapters) — generic/mediocre       |
+| `adapted_response`   | Answer from 1.5B model + selected LoRA adapter — domain-specialized |
+| `adapter_used`       | Which domain was routed to: `code`, `math`, `qa`, or `medical`      |
+| `gating_scores`      | Softmax probabilities for each domain (routing confidence)          |
+| `firewall_label`     | Prompt injection detection result: `SAFE` or `INJECTION`            |
+| `time_taken_seconds` | Total latency (firewall + gating + generation)                      |
+
+#### Hackathon Key Insight
+
+The side-by-side comparison (**`base_response` vs `adapted_response`**) visually demonstrates:
+
+- ✓ Base model is **generic** (decent but not specialized)
+- ✓ Adapted model is **expert** (specialized via LoRA)
+- ✓ Why adapters matter for edge: **Multiple specialists, single storage footprint**
 
 ## Files
 

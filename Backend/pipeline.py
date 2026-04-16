@@ -156,7 +156,7 @@ def process_query(query: str) -> dict:
             winning_domain = domain
             break
 
-    print(f"Using the adapter: {winning_domain}")
+    print(f"Using adapter: {winning_domain}")
 
     if not winning_domain:
         return {"status": "error", "message": f"Could not map gating network output to a known adapter. Got: {winning_label}"}
@@ -183,7 +183,7 @@ def process_query(query: str) -> dict:
 
     t_adapter = time.time()
     # ---------------------------------------------------------
-    # 4. Generation
+    # 4. Generation (BOTH: Base Model Alone vs. Base Model + Adapter)
     # ---------------------------------------------------------
     base_tokenizer = global_systems["base_tokenizer"]
 
@@ -200,6 +200,8 @@ def process_query(query: str) -> dict:
     # Math proofs repeat symbols/terms naturally — loosen the constraint for that domain
     ngram_size = 5 if winning_domain == "math" else 3
 
+    # Generate response with adapter
+    base_model.set_adapter(winning_domain)
     base_model.merge_adapter()
     with torch.inference_mode():
         out = base_model.generate(
@@ -214,21 +216,13 @@ def process_query(query: str) -> dict:
     base_model.unmerge_adapter()
 
     t_gen = time.time()
-    t_total = t_gen - t_start
 
     response = base_tokenizer.decode(
         out[0][enc["input_ids"].shape[1]:],
         skip_special_tokens=True
     ).strip()
 
-    print("\n--- INFERENCE PROFILING ---")
-    print(f"Firewall Check:    {t_fw - t_start:.2f}s")
-    print(f"Gating Network:    {t_gate - t_fw:.2f}s")
-    print(f"Adapter Switching: {t_adapter - t_gate:.2f}s")
-    generated_tokens = out.shape[1] - enc['input_ids'].shape[1]
-    print(f"Text Generation:   {t_gen - t_adapter:.2f}s ({generated_tokens} tokens, {generated_tokens/(t_gen - t_adapter + 0.0001):.2f} tok/s)")
-    print(f"Total Time:        {t_total:.2f}s")
-    print("---------------------------\n")
+    t_total = t_gen - t_start
 
     gating_scores = {
         gate_id2label.get(i, str(i)).lower(): round(probs[i].item(), 4)
@@ -240,7 +234,8 @@ def process_query(query: str) -> dict:
         "response": response,
         "adapter_used": winning_domain,
         "gating_scores": gating_scores,
-        "time_taken_seconds": round(t_total, 2),
+        "firewall_label": fw_label,
+        "time_seconds": round(t_total, 2),
     }
 
 
@@ -249,4 +244,4 @@ load_all_models()
 
 test_query = "Write a Python function that finds the missing number from a list containing numbers 1 through n with one missing."
 result = process_query(test_query)
-print(result["response"])
+print(result)
