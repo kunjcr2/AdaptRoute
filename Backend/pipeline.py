@@ -187,6 +187,15 @@ def process_query(query: str) -> dict:
     # ---------------------------------------------------------
     base_tokenizer = global_systems["base_tokenizer"]
 
+    # Dynamic max_new_tokens based on domain
+    max_tokens_map = {
+        "medical": 256,
+        "code": 128,
+        "math": 128,
+        "qa": 64
+    }
+    max_new_tokens = max_tokens_map.get(winning_domain, 128)
+
     # Standard format wrapper used for QA/Tasks
     formatted_prompt = f"<|im_start|>user\n{query}<|im_end|>\n<|im_start|>assistant\n"
     enc = base_tokenizer(formatted_prompt, return_tensors="pt").to(base_model.device)
@@ -206,7 +215,7 @@ def process_query(query: str) -> dict:
     with torch.inference_mode():
         out = base_model.generate(
             **enc,
-            max_new_tokens=128,
+            max_new_tokens=max_new_tokens,
             do_sample=False,
             use_cache=True,
             no_repeat_ngram_size=ngram_size,
@@ -221,6 +230,20 @@ def process_query(query: str) -> dict:
         out[0][enc["input_ids"].shape[1]:],
         skip_special_tokens=True
     ).strip()
+
+    # For code domain, remove trailing comments
+    if winning_domain == "code":
+        parts = response.split("#")
+        if len(parts) > 1:
+            response = "#".join(parts[:-1]).strip()
+        # Clean up any trailing whitespace/artifacts
+        response = response.rstrip()
+      
+    if winning_domain == "medical" or winning_domain == "math":
+        parts = response.split(".")
+        if len(parts) > 1:
+            response = ".".join(parts[:-1]).strip()
+        response = response.rstrip()
 
     t_total = t_gen - t_start
 
@@ -237,11 +260,3 @@ def process_query(query: str) -> dict:
         "firewall_label": fw_label,
         "time_seconds": round(t_total, 2),
     }
-
-
-prepare()
-load_all_models()
-
-test_query = "Write a Python function that finds the missing number from a list containing numbers 1 through n with one missing."
-result = process_query(test_query)
-print(result)
