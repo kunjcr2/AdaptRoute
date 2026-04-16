@@ -23,6 +23,10 @@ ADAPTER_REPOS = {
 # Fix: In Colab/Jupyter, __file__ is not defined. Use os.getcwd() instead.
 ADAPTERS_DIR = os.path.abspath(os.path.join(os.getcwd(), 'Adapters'))
 
+# Single device — CUDA if available (A100 on Colab), else CPU
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {DEVICE}")
+
 def prepare():
     """
     Checks if the local Adapters folder has the required weights.
@@ -63,26 +67,22 @@ def load_all_models():
     # Labels: 0 = SAFE, 1 = INJECTION
     print("Loading Firewall Model...")
     global_systems["firewall_tokenizer"] = AutoTokenizer.from_pretrained(FIREWALL_MODEL)
-    global_systems["firewall_model"] = AutoModelForSequenceClassification.from_pretrained(FIREWALL_MODEL)
+    global_systems["firewall_model"] = AutoModelForSequenceClassification.from_pretrained(FIREWALL_MODEL).to(DEVICE)
     global_systems["firewall_model"].eval()
 
     # 2. Load Gating Network
     print("Loading Gating Network...")
     global_systems["gating_tokenizer"] = AutoTokenizer.from_pretrained(GATING_MODEL)
-    global_systems["gating_model"] = AutoModelForSequenceClassification.from_pretrained(
-        GATING_MODEL,
-        device_map="auto"
-    )
+    global_systems["gating_model"] = AutoModelForSequenceClassification.from_pretrained(GATING_MODEL).to(DEVICE)
     global_systems["gating_model"].eval()
 
     # 3. Load Base Model (Native bfloat16 for A100 speed!)
     print("Loading Base Model natively in bfloat16...")
     base_model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
-        device_map="auto",
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
-    )
+    ).to(DEVICE)
     # CRITICAL FIX for generation speed: use_cache must be True for inference
     base_model.config.use_cache = True
 
@@ -96,13 +96,13 @@ def load_all_models():
 
     print("All models loaded successfully! (Adapters deferred until queried)")
 
-def process_query(query: str) -> str:
+def process_query(query: str) -> dict:
     """
     Passes a single query through the firewall, gating network, soft-merges adapters,
-    generates a response, and returns a single string indicating Success or Error.
+    generates a response, and returns a structured dict for the API layer.
     """
     if any(m is None for m in global_systems.values()):
-        return "Error: Models are not loaded. Please call load_all_models() first."
+        return {"status": "error", "message": "Models are not loaded. Please call load_all_models() first."}
 
     import time
     t_start = time.time()
@@ -122,7 +122,11 @@ def process_query(query: str) -> str:
 
     # ProtectAI labels: "SAFE" = pass, "INJECTION" = block
     if fw_label == "INJECTION":
-        return f"Error: Query blocked by firewall (Prompt Injection Detected)."
+        return {
+            "status": "blocked",
+            "message": "Your query was flagged as a potential prompt injection attempt and could not be processed. Please rephrase your request.",
+            "firewall_label": fw_label
+        }
 
     t_fw = time.time()
     # ---------------------------------------------------------
@@ -152,7 +156,7 @@ def process_query(query: str) -> str:
     print(f"Using the adapter: {winning_domain}")
 
     if not winning_domain:
-        return f"Error: Could not map gating network outputs to adapter domains. Winning output was: {winning_label}"
+        return {"status": "error", "message": f"Could not map gating network output to a known adapter. Got: {winning_label}"}
 
     t_gate = time.time()
     # ---------------------------------------------------------
@@ -205,17 +209,29 @@ def process_query(query: str) -> str:
         skip_special_tokens=True
     ).strip()
 
-    t_gen = time.time()
+    t_total = t_gen - t_start
 
     print("\n--- INFERENCE PROFILING ---")
-    print(f"Firewall Check: {t_fw - t_start:.2f}s")
-    print(f"Gating Network: {t_gate - t_fw:.2f}s")
+    print(f"Firewall Check:    {t_fw - t_start:.2f}s")
+    print(f"Gating Network:    {t_gate - t_fw:.2f}s")
     print(f"Adapter Switching: {t_adapter - t_gate:.2f}s")
     generated_tokens = out.shape[1] - enc['input_ids'].shape[1]
-    print(f"Text Generation: {t_gen - t_adapter:.2f}s ({generated_tokens} tokens, {generated_tokens/(t_gen - t_adapter + 0.0001):.2f} tok/s)")
+    print(f"Text Generation:   {t_gen - t_adapter:.2f}s ({generated_tokens} tokens, {generated_tokens/(t_gen - t_adapter + 0.0001):.2f} tok/s)")
+    print(f"Total Time:        {t_total:.2f}s")
     print("---------------------------\n")
 
-    return f"Success: {response}"
+    gating_scores = {
+        gate_id2label.get(i, str(i)).lower(): round(probs[i].item(), 4)
+        for i in range(len(probs))
+    }
+
+    return {
+        "status": "success",
+        "response": response,
+        "adapter_used": winning_domain,
+        "gating_scores": gating_scores,
+        "time_taken_seconds": round(t_total, 2),
+    }
 
 prepare()
 load_all_models()
