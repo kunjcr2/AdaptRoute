@@ -1,64 +1,68 @@
 # ==============================================================================
-# worker_colab.py — Run this ENTIRE file in a single Google Colab cell.
-# Uses Flask (sync, no nest_asyncio needed) + pyngrok to expose the pipeline.
+# COLAB WORKER — Expose pipeline via Flask + ngrok
+# Append this to the same cell as your pipeline.py
 # ==============================================================================
 
-# ── Step 0: Install dependencies ──────────────────────────────────────────────
+# Install deps
 import subprocess
-subprocess.run(["pip", "install", "-q", "flask", "pyngrok",
-    "transformers", "peft", "bitsandbytes", "accelerate",
-    "datasets", "huggingface_hub"
-], check=True)
+subprocess.run(["pip", "install", "-q", "flask", "flask-cors", "pyngrok"], check=True)
 
-import threading
-import time
+import json, time, threading
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 from pyngrok import ngrok
 from google.colab import userdata
 
-# ── Step 1: Ngrok Auth ────────────────────────────────────────────────────────
-NGROK_AUTH_TOKEN = userdata.get("NGROK")
-ngrok.set_auth_token(NGROK_AUTH_TOKEN)
+# ==============================================================================
+# Configure ngrok
+# ==============================================================================
+NGROK_TOKEN = userdata.get("NGROK")
+ngrok.set_auth_token(NGROK_TOKEN)
 
-print("==> Starting model loading...")
-prepare()
-load_all_models()
-print("==> All models ready.")
-
-# ── Step 3: Flask App ─────────────────────────────────────────────────────────
+# ==============================================================================
+# Flask App
+# ==============================================================================
 app = Flask(__name__)
+CORS(app)
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "message": "AdaptRoute worker is running."})
+    return jsonify({"status": "ok", "message": "Pipeline running."})
 
 @app.route("/generate", methods=["POST"])
 def generate():
-    data = request.get_json(force=True)
-    query = data.get("query", "").strip()
-
+    data = request.get_json(force=True) or {}
+    query = (data.get("query") or "").strip()
+    
     if not query:
-        return jsonify({"status": "error", "message": "Query cannot be empty."}), 400
-
+        return jsonify({"status": "error", "message": "Provide 'query' in request body."}), 400
+    
     result = process_query(query)
-    return jsonify(result)
+    return jsonify(result), 200
 
-# ── Step 4: Start Flask in background thread ──────────────────────────────────
+# ==============================================================================
+# Start Flask & ngrok
+# ==============================================================================
 def run_flask():
-    app.run(port=5000, use_reloader=False)
+    app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False, threaded=True)
 
-threading.Thread(target=run_flask, daemon=True).start()
-time.sleep(2)  # Give Flask a moment to start
+flask_thread = threading.Thread(target=run_flask, daemon=True)
+flask_thread.start()
+time.sleep(2)
 
-# ── Step 5: Open ngrok tunnel ─────────────────────────────────────────────────
 public_url = ngrok.connect(5000).public_url
 
-print("\n" + "="*60)
-print("  AdaptRoute Worker is LIVE!")
-print(f"  Public URL: {public_url}")
-print("  Copy this URL into local_bridge.py → COLAB_URL")
-print("="*60 + "\n")
+print("\n" + "=" * 60)
+print(f"✓ Pipeline exposed at: {public_url}")
+print("=" * 60)
+print(f"POST {public_url}/generate  (body: {{'query': '...'}})")
+print("=" * 60)
 
 # Keep cell alive
-while True:
-    time.sleep(60)
+try:
+    while True:
+        time.sleep(60)
+except KeyboardInterrupt:
+    print("Shutting down...")
+    ngrok.disconnect(public_url)
+    ngrok.kill()

@@ -1,6 +1,5 @@
-# pip install transformers peft bitsandbytes accelerate datasets huggingface_hub
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModelForSequenceClassification, BitsAndBytesConfig
+from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModelForSequenceClassification
 from peft import PeftModel, PeftConfig
 import os
 from huggingface_hub import snapshot_download
@@ -199,7 +198,7 @@ def process_query(query: str) -> dict:
         stop_tokens.append(im_end_id)
 
     # Math proofs repeat symbols/terms naturally — loosen the constraint for that domain
-    ngram_size = 7 if winning_domain == "math" else 5
+    ngram_size = 5 if winning_domain == "math" else 3
 
     base_model.merge_adapter()
     with torch.inference_mode():
@@ -244,9 +243,10 @@ def process_query(query: str) -> dict:
         "time_taken_seconds": round(t_total, 2),
     }
 
+
 prepare()
 load_all_models()
 
-test_query = "Generate a python function to convert a list to a dictionary with index being the keys and values being values."
+test_query = "Write a Python function that finds the missing number from a list containing numbers 1 through n with one missing."
 result = process_query(test_query)
-print(result)
+print(result["response"])
