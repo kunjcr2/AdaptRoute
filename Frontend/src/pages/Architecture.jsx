@@ -35,12 +35,12 @@ const Architecture = () => {
             <div className="bg-white border-2 border-brand-200 w-full p-8 rounded-3xl text-center shadow-lg relative group hover:border-brand-400 transition-all">
               <div className="flex items-center justify-center gap-3 mb-4">
                 <Shield className="w-6 h-6 text-brand-600" />
-                <div className="font-bold text-xl text-brand-900">Firewall (DistilBERT)</div>
+                <div className="font-bold text-xl text-brand-900">Firewall (DeBERTa-v3 — ProtectAI)</div>
               </div>
-              <p className="text-brand-600 text-sm mb-6">Binary Classification</p>
+              <p className="text-brand-600 text-sm mb-6">Pre-trained Prompt Injection Detection</p>
               
               <div className="flex justify-center gap-3 mb-6">
-                 {['Clear', 'Malicious/OOD'].map(t => (
+                 {['SAFE', 'INJECTION'].map(t => (
                    <span key={t} className="bg-brand-50 text-brand-700 font-mono text-xs px-3 py-1.5 rounded-lg border border-brand-100">{t}</span>
                  ))}
               </div>

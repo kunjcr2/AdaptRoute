@@ -4,7 +4,7 @@ This directory contains the core training and integration logic for the AdaptRou
 
 ## Hub Models
 The primary routing models and expert adapters are hosted on Hugging Face:
-- **Firewall:** [kunjcr2/firewall-bert-adaptroute](https://huggingface.co/kunjcr2/firewall-bert-adaptroute)
+- **Firewall:** [protectai/deberta-v3-base-prompt-injection-v2](https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2) (Pre-trained)
 - **Gating Network:** [kunjcr2/gating-bert-adaptroute](https://huggingface.co/kunjcr2/gating-bert-adaptroute)
 - **Adapters (v2):**
   - [kunjcr2/code-adaptroute-v2](https://huggingface.co/kunjcr2/code-adaptroute-v2)
@@ -15,11 +15,11 @@ The primary routing models and expert adapters are hosted on Hugging Face:
 ## Notebooks
 
 ### 1. [Firewall.ipynb](./Firewall.ipynb)
-- For more info on the firewall model, visit [llm-firewall](https://github.com/kunjcr2/llms-from-scratch/tree/main/models/llm-firewall)
+- Uses the pre-trained [protectai/deberta-v3-base-prompt-injection-v2](https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2) model.
 
 **Purpose:** Sets up the first-line security layer.
-- **Task:** Binary classification (Clear vs. Adversarial/OOD).
-- **Function:** Acts as a gateway that must "clear" a query before it is passed to the gating network.
+- **Task:** Binary classification (SAFE vs. INJECTION).
+- **Function:** Acts as a gateway that must "clear" a query before it is passed to the gating network. No custom training required — the model is loaded directly from Hugging Face.
 
 ### 2. [train_gate_adaptroute.ipynb](./train_gate_adaptroute.ipynb)
 **Purpose:** Fine-tunes a DistilBERT-based gating network using LoRA.

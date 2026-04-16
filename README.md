@@ -19,7 +19,7 @@ User query
     │
     ▼
 ┌─────────────────────────────────────────────┐
-│          Firewall (DistilBERT)              │
+│     Firewall (DeBERTa-v3 — ProtectAI)       │
 │                                             │
 │  Binary: [Clear] | [Malicious/OOD]          │  <- input filtering
 └─────────────────────────────────────────────┘
@@ -52,7 +52,7 @@ Response
 
 | Stage | What Happens | Estimated Time (A100) |
 |---|---|---|
-| 1. Firewall | Fine-tune DistilBERT for adversarial/OOD detection | ~10 min |
+| 1. Firewall | Pre-trained DeBERTa-v3 prompt injection detector (ProtectAI) | No training needed |
 | 2. Gating network | Fine-tune DistilBERT as a 4-class task classifier | ~10 min |
 | 3. LoRA adapters | SFT one adapter per domain on top of the base SLM | ~25 min per adapter |
 | 4. Soft merge | Wire gate probabilities into `add_weighted_adapter()` | inference-time only |
@@ -74,11 +74,11 @@ Loaded in 4-bit NF4 quantization via `bitsandbytes`. Weights are fully frozen. O
 
 ### Firewall
 
-A binary classifier (also `distilbert-base-uncased`) that acts as the first line of defense. It identifies queries that are either adversarial (jailbreaks, prompt injections) or completely out-of-domain (OOD).
+A pre-trained DeBERTa-v3-based prompt injection detector from [ProtectAI](https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2) that acts as the first line of defense. It classifies queries as `SAFE` or `INJECTION`, blocking adversarial prompt injections, jailbreaks, and hidden system-note attacks before they reach the gating network.
 
-**Model Path:** [kunjcr2/firewall-bert-adaptroute](https://huggingface.co/kunjcr2/firewall-bert-adaptroute)
+**Model Path:** [protectai/deberta-v3-base-prompt-injection-v2](https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2)
 
-**Why a separate model:** By decoupling the firewall from the gating network, we can update security policies or adversarial training sets without retraining the task-specific routing logic. It ensures that the gating network only processes "clean" queries, improving overall system stability.
+**Why a pre-trained model:** Prompt injection detection requires an extremely diverse training set spanning short benign questions, code snippets, long-form text, and sophisticated hidden-payload attacks. ProtectAI's model was trained on hundreds of thousands of such samples, vastly outperforming any small custom-trained classifier. By decoupling the firewall from the gating network, we can swap security models without retraining the task-specific routing logic.
 
 ---
 
