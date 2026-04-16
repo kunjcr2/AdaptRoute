@@ -1,11 +1,19 @@
 # ==============================================================================
 # worker_colab.py — Run this ENTIRE file in a single Google Colab cell.
-# Uses Flask (sync, no nest_asyncio needed) + pyngrok to expose the pipeline.
+# Uses Flask (sync) + pyngrok to expose the AdaptRoute pipeline.
 #
-# /generate accepts: {"query": "...", "mode": "routed" | "base" | "both"}
-#   - "routed" (default): firewall + gating + adapter + generate
-#   - "base":   firewall + gating (for scores) + generate with NO adapter
-#   - "both":   runs both base and routed in one request, returns both
+# Endpoints:
+#   GET  /health
+#   POST /generate          body: { query | messages, mode }   (non-streaming)
+#   POST /generate-stream   body: { query | messages }         (SSE streaming)
+#
+# /generate modes: "routed" (default), "base", "both".
+# /generate-stream always uses the routed path and emits events:
+#   { "type": "meta",    "adapter_used": "...", "gating_scores": {...}, ... }
+#   { "type": "token",   "text": "..." }
+#   { "type": "done",    "seconds": 3.12, "total_chars": 420 }
+#   { "type": "blocked", "message": "...", "firewall_label": "INJECTION" }
+#   { "type": "error",   "message": "..." }
 # ==============================================================================
 
 # ── Step 0: Install dependencies ──────────────────────────────────────────────
@@ -18,10 +26,12 @@ subprocess.run([
 ], check=True)
 
 import os
+import json
 import time
 import threading
 import torch
-from flask import Flask, request, jsonify
+from threading import Thread
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 from pyngrok import ngrok
 from google.colab import userdata
@@ -30,7 +40,7 @@ from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
     AutoModelForSequenceClassification,
-    BitsAndBytesConfig,
+    TextIteratorStreamer,
 )
 from peft import PeftModel, PeftConfig
 from huggingface_hub import snapshot_download
@@ -55,18 +65,19 @@ ADAPTERS_DIR = os.path.abspath(os.path.join(os.getcwd(), "Adapters"))
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {DEVICE}")
 
+# Serialize generation — one model on one GPU, concurrent requests would collide
+GEN_LOCK = threading.Lock()
+
 
 # ==============================================================================
 # PIPELINE — SETUP
 # ==============================================================================
 def prepare():
-    """Download adapters from HF Hub if they don't exist locally."""
     os.makedirs(ADAPTERS_DIR, exist_ok=True)
     existing_items = [
         name for name in os.listdir(ADAPTERS_DIR)
         if os.path.isdir(os.path.join(ADAPTERS_DIR, name))
     ]
-
     if not existing_items:
         print(f"Adapters folder is empty. Downloading adapters to {ADAPTERS_DIR}...")
         for domain, repo_id in ADAPTER_REPOS.items():
@@ -93,7 +104,6 @@ global_systems = {
 
 
 def load_all_models():
-    """Load the Firewall, Gating Network, and Base Model into RAM."""
     global global_systems
 
     print("Loading Firewall Model...")
@@ -118,24 +128,21 @@ def load_all_models():
     ).to(DEVICE)
     base_model.config.use_cache = True
 
-    global_systems["base_tokenizer"] = AutoTokenizer.from_pretrained(
-        BASE_MODEL, trust_remote_code=True
-    )
-    if global_systems["base_tokenizer"].pad_token is None:
-        global_systems["base_tokenizer"].pad_token = global_systems["base_tokenizer"].eos_token
-    global_systems["base_tokenizer"].padding_side = "right"
+    tok = AutoTokenizer.from_pretrained(BASE_MODEL, trust_remote_code=True)
+    if tok.pad_token is None:
+        tok.pad_token = tok.eos_token
+    tok.padding_side = "right"
 
+    global_systems["base_tokenizer"] = tok
     global_systems["base_model"] = base_model
     global_systems["base_model"].eval()
-
-    print("All models loaded successfully! (Adapters deferred until queried)")
+    print("All models loaded.")
 
 
 # ==============================================================================
 # PIPELINE — HELPERS
 # ==============================================================================
 def _firewall_check(query: str) -> str:
-    """Returns the firewall label, e.g. 'SAFE' or 'INJECTION'."""
     fw_tokenizer = global_systems["firewall_tokenizer"]
     fw_model = global_systems["firewall_model"]
     fw_inputs = fw_tokenizer(
@@ -148,7 +155,6 @@ def _firewall_check(query: str) -> str:
 
 
 def _gate(query: str):
-    """Returns (winning_domain, gating_scores_dict)."""
     gating_tokenizer = global_systems["gating_tokenizer"]
     gating_model = global_systems["gating_model"]
     gate_inputs = gating_tokenizer(
@@ -176,10 +182,8 @@ def _gate(query: str):
 
 
 def _ensure_adapter_loaded(winning_domain: str):
-    """Load the adapter into the PEFT wrapper if not already present."""
     base_model = global_systems["base_model"]
     local_adapter_path = os.path.join(ADAPTERS_DIR, winning_domain)
-
     if not isinstance(base_model, PeftModel):
         base_model = PeftModel.from_pretrained(
             base_model, local_adapter_path, adapter_name=winning_domain
@@ -190,91 +194,110 @@ def _ensure_adapter_loaded(winning_domain: str):
             base_model.load_adapter(local_adapter_path, adapter_name=winning_domain)
 
 
-def _generate(query: str, adapter_name: str | None) -> tuple[str, float, int]:
+def _format_prompt(messages_or_query) -> str:
     """
-    Generate a response from the base model.
-    If adapter_name is None, disables adapters (true base model output).
-    Returns (response_text, seconds_elapsed, tokens_generated).
+    Accepts either a string (single-shot) or a list of {role, content}.
+    Uses Qwen's built-in chat template when given messages.
     """
+    tokenizer = global_systems["base_tokenizer"]
+    if isinstance(messages_or_query, str):
+        messages = [{"role": "user", "content": messages_or_query}]
+    else:
+        messages = messages_or_query
+
+    try:
+        return tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+    except Exception:
+        # Fallback to manual ChatML if tokenizer has no chat template
+        parts = []
+        for m in messages:
+            parts.append(f"<|im_start|>{m['role']}\n{m['content']}<|im_end|>")
+        parts.append("<|im_start|>assistant\n")
+        return "\n".join(parts)
+
+
+def _stop_token_ids():
+    tokenizer = global_systems["base_tokenizer"]
+    stop_tokens = [tokenizer.eos_token_id]
+    im_end_id = tokenizer.convert_tokens_to_ids("<|im_end|>")
+    if im_end_id is not None and im_end_id != tokenizer.unk_token_id:
+        stop_tokens.append(im_end_id)
+    return stop_tokens
+
+
+def _generate(query_or_messages, adapter_name):
+    """Non-streaming generation. Returns (response_text, seconds, tokens)."""
     base_model = global_systems["base_model"]
     base_tokenizer = global_systems["base_tokenizer"]
 
-    # Switch adapter state
     if isinstance(base_model, PeftModel):
         if adapter_name is None:
-            # Disable all adapters → pure base model
             base_model.disable_adapter_layers()
         else:
             base_model.enable_adapter_layers()
             base_model.set_adapter(adapter_name)
 
     try:
-        formatted_prompt = f"<|im_start|>user\n{query}<|im_end|>\n<|im_start|>assistant\n"
-        enc = base_tokenizer(formatted_prompt, return_tensors="pt").to(base_model.device)
-
-        stop_tokens = [base_tokenizer.eos_token_id]
-        im_end_id = base_tokenizer.convert_tokens_to_ids("<|im_end|>")
-        if im_end_id is not None and im_end_id != base_tokenizer.unk_token_id:
-            stop_tokens.append(im_end_id)
+        prompt_text = _format_prompt(query_or_messages)
+        enc = base_tokenizer(prompt_text, return_tensors="pt").to(base_model.device)
 
         t0 = time.time()
         with torch.no_grad():
             out = base_model.generate(
                 **enc,
-                max_new_tokens=256,
+                max_new_tokens=512,
                 do_sample=False,
                 repetition_penalty=1.5,
                 pad_token_id=base_tokenizer.pad_token_id,
-                eos_token_id=stop_tokens,
+                eos_token_id=_stop_token_ids(),
             )
         elapsed = time.time() - t0
 
         response = base_tokenizer.decode(
-            out[0][enc["input_ids"].shape[1]:],
-            skip_special_tokens=True,
+            out[0][enc["input_ids"].shape[1]:], skip_special_tokens=True
         ).strip()
-        generated_tokens = out.shape[1] - enc["input_ids"].shape[1]
-        return response, elapsed, generated_tokens
+        tokens = out.shape[1] - enc["input_ids"].shape[1]
+        return response, elapsed, tokens
     finally:
-        # Re-enable adapter layers so subsequent calls default to routed behavior
         if isinstance(base_model, PeftModel):
             base_model.enable_adapter_layers()
 
 
 # ==============================================================================
-# PIPELINE — ORCHESTRATION
+# PIPELINE — ORCHESTRATION (non-streaming)
 # ==============================================================================
-def process_query(query: str, mode: str = "routed") -> dict:
-    """
-    mode:
-      "routed" → firewall + gating + adapter + generate (single response)
-      "base"   → firewall + gating (scores only) + generate with NO adapter
-      "both"   → both base and routed responses returned together
-    """
+def process_query(query_or_messages, mode: str = "routed") -> dict:
     if any(m is None for m in global_systems.values()):
         return {"status": "error", "message": "Models are not loaded."}
 
     if mode not in ("routed", "base", "both"):
         return {"status": "error", "message": f"Unknown mode: {mode}"}
 
+    # Extract the user query to route on — if messages, use the latest user turn
+    if isinstance(query_or_messages, str):
+        query_text = query_or_messages
+    else:
+        user_msgs = [m for m in query_or_messages if m.get("role") == "user"]
+        query_text = user_msgs[-1]["content"] if user_msgs else ""
+
+    if not query_text.strip():
+        return {"status": "error", "message": "No user query to process."}
+
     t_start = time.time()
 
-    # 1. Firewall
-    fw_label = _firewall_check(query)
+    fw_label = _firewall_check(query_text)
     if fw_label == "INJECTION":
         return {
             "status": "blocked",
-            "message": (
-                "Your query was flagged as a potential prompt injection attempt "
-                "and could not be processed. Please rephrase your request."
-            ),
+            "message": "Your query was flagged as a potential prompt injection attempt.",
             "firewall_label": fw_label,
             "mode": mode,
         }
     t_fw = time.time()
 
-    # 2. Gating
-    winning_domain, gating_scores = _gate(query)
+    winning_domain, gating_scores = _gate(query_text)
     if not winning_domain:
         return {
             "status": "error",
@@ -283,13 +306,11 @@ def process_query(query: str, mode: str = "routed") -> dict:
         }
     t_gate = time.time()
 
-    # 3. Ensure adapter is loaded (needed for routed or both; harmless for base)
     need_adapter = mode in ("routed", "both")
     if need_adapter:
         _ensure_adapter_loaded(winning_domain)
     t_adapter = time.time()
 
-    # 4. Generate per mode
     result = {
         "status": "success",
         "mode": mode,
@@ -299,37 +320,129 @@ def process_query(query: str, mode: str = "routed") -> dict:
     }
 
     if mode == "routed":
-        resp, elapsed, tokens = _generate(query, adapter_name=winning_domain)
+        resp, el, tk = _generate(query_or_messages, adapter_name=winning_domain)
         result["response"] = resp
-        result["generation_seconds"] = round(elapsed, 2)
-        result["tokens_generated"] = tokens
-
+        result["generation_seconds"] = round(el, 2)
+        result["tokens_generated"] = tk
     elif mode == "base":
-        resp, elapsed, tokens = _generate(query, adapter_name=None)
+        resp, el, tk = _generate(query_or_messages, adapter_name=None)
         result["response"] = resp
-        result["generation_seconds"] = round(elapsed, 2)
-        result["tokens_generated"] = tokens
-
+        result["generation_seconds"] = round(el, 2)
+        result["tokens_generated"] = tk
     elif mode == "both":
-        base_resp, base_elapsed, base_tokens = _generate(query, adapter_name=None)
-        routed_resp, routed_elapsed, routed_tokens = _generate(query, adapter_name=winning_domain)
-        result["base_response"] = base_resp
-        result["base_generation_seconds"] = round(base_elapsed, 2)
-        result["base_tokens_generated"] = base_tokens
-        result["routed_response"] = routed_resp
-        result["routed_generation_seconds"] = round(routed_elapsed, 2)
-        result["routed_tokens_generated"] = routed_tokens
+        br, bel, btk = _generate(query_or_messages, adapter_name=None)
+        rr, rel, rtk = _generate(query_or_messages, adapter_name=winning_domain)
+        result.update({
+            "base_response": br, "base_generation_seconds": round(bel, 2), "base_tokens_generated": btk,
+            "routed_response": rr, "routed_generation_seconds": round(rel, 2), "routed_tokens_generated": rtk,
+        })
 
-    t_total = time.time() - t_start
-    result["total_time_seconds"] = round(t_total, 2)
+    result["total_time_seconds"] = round(time.time() - t_start, 2)
     result["timing"] = {
         "firewall": round(t_fw - t_start, 3),
         "gating": round(t_gate - t_fw, 3),
         "adapter_load": round(t_adapter - t_gate, 3),
         "generation_total": round(time.time() - t_adapter, 3),
     }
-
     return result
+
+
+# ==============================================================================
+# PIPELINE — STREAMING
+# ==============================================================================
+def sse(event: dict) -> str:
+    return f"data: {json.dumps(event)}\n\n"
+
+
+def stream_query(messages):
+    """
+    Generator yielding SSE-formatted events for a chat-style request.
+    Always uses the routed path.
+    """
+    # Latest user message drives firewall + gating
+    user_msgs = [m for m in messages if m.get("role") == "user"]
+    if not user_msgs:
+        yield sse({"type": "error", "message": "No user message in conversation."})
+        return
+    latest_query = (user_msgs[-1].get("content") or "").strip()
+    if not latest_query:
+        yield sse({"type": "error", "message": "Latest user message is empty."})
+        return
+
+    try:
+        # 1. Firewall
+        fw_label = _firewall_check(latest_query)
+        if fw_label == "INJECTION":
+            yield sse({
+                "type": "blocked",
+                "message": "Your query was flagged as a potential prompt injection attempt.",
+                "firewall_label": fw_label,
+            })
+            return
+
+        # 2. Gating
+        winning_domain, gating_scores = _gate(latest_query)
+        if not winning_domain:
+            yield sse({
+                "type": "error",
+                "message": "Could not route query to any known adapter.",
+                "gating_scores": gating_scores,
+            })
+            return
+
+        # 3. Load + activate adapter
+        _ensure_adapter_loaded(winning_domain)
+        base_model = global_systems["base_model"]
+        base_tokenizer = global_systems["base_tokenizer"]
+        base_model.enable_adapter_layers()
+        base_model.set_adapter(winning_domain)
+
+        # 4. Emit meta
+        yield sse({
+            "type": "meta",
+            "adapter_used": winning_domain,
+            "gating_scores": gating_scores,
+            "firewall_label": fw_label,
+        })
+
+        # 5. Build prompt and streamer
+        prompt_text = _format_prompt(messages)
+        enc = base_tokenizer(prompt_text, return_tensors="pt").to(base_model.device)
+
+        streamer = TextIteratorStreamer(
+            base_tokenizer,
+            skip_prompt=True,
+            skip_special_tokens=True,
+            timeout=120,
+        )
+        gen_kwargs = dict(
+            **enc,
+            max_new_tokens=512,
+            do_sample=False,
+            repetition_penalty=1.5,
+            pad_token_id=base_tokenizer.pad_token_id,
+            eos_token_id=_stop_token_ids(),
+            streamer=streamer,
+        )
+
+        t0 = time.time()
+        gen_thread = Thread(target=base_model.generate, kwargs=gen_kwargs)
+        gen_thread.start()
+
+        total_chars = 0
+        for new_text in streamer:
+            if new_text:
+                total_chars += len(new_text)
+                yield sse({"type": "token", "text": new_text})
+
+        gen_thread.join()
+        yield sse({
+            "type": "done",
+            "seconds": round(time.time() - t0, 2),
+            "total_chars": total_chars,
+        })
+    except Exception as e:
+        yield sse({"type": "error", "message": f"{type(e).__name__}: {e}"})
 
 
 # ==============================================================================
@@ -338,7 +451,6 @@ def process_query(query: str, mode: str = "routed") -> dict:
 NGROK_AUTH_TOKEN = userdata.get("NGROK")
 ngrok.set_auth_token(NGROK_AUTH_TOKEN)
 
-
 # ==============================================================================
 # Step 2: Model loading
 # ==============================================================================
@@ -346,7 +458,6 @@ print("==> Starting model loading...")
 prepare()
 load_all_models()
 print("==> All models ready.")
-
 
 # ==============================================================================
 # Step 3: Flask App
@@ -363,30 +474,64 @@ def health():
 @app.route("/generate", methods=["POST"])
 def generate():
     data = request.get_json(force=True) or {}
-    query = (data.get("query") or "").strip()
+    messages = data.get("messages")
+    query = (data.get("query") or "").strip() if isinstance(data.get("query"), str) else ""
     mode = (data.get("mode") or "routed").strip().lower()
 
-    if not query:
-        return jsonify({"status": "error", "message": "Query cannot be empty."}), 400
+    if not messages and not query:
+        return jsonify({"status": "error", "message": "Provide 'messages' or 'query'."}), 400
 
-    result = process_query(query, mode=mode)
+    payload = messages if messages else query
+
+    with GEN_LOCK:
+        result = process_query(payload, mode=mode)
+
     status_code = 200 if result.get("status") == "success" else (
         403 if result.get("status") == "blocked" else 500
     )
     return jsonify(result), status_code
 
 
+@app.route("/generate-stream", methods=["POST"])
+def generate_stream():
+    data = request.get_json(force=True) or {}
+    messages = data.get("messages")
+    query = (data.get("query") or "").strip() if isinstance(data.get("query"), str) else ""
+
+    if not messages and not query:
+        return jsonify({"status": "error", "message": "Provide 'messages' or 'query'."}), 400
+
+    if not messages:
+        messages = [{"role": "user", "content": query}]
+
+    def generator():
+        # One request at a time — GPU can't safely run two generations concurrently
+        with GEN_LOCK:
+            for chunk in stream_query(messages):
+                yield chunk
+
+    return Response(
+        generator(),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
 # ==============================================================================
 # Step 4: Start Flask in background thread
 # ==============================================================================
 def run_flask():
-    app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
+    # threaded=True so streaming requests don't block health checks
+    app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False, threaded=True)
 
 
 flask_thread = threading.Thread(target=run_flask, daemon=True)
 flask_thread.start()
 time.sleep(2)
-
 
 # ==============================================================================
 # Step 5: Open ngrok tunnel
@@ -400,9 +545,9 @@ print("  Paste into your frontend .env as VITE_WORKER_URL")
 print("=" * 60)
 print("\nEndpoints:")
 print(f"  GET  {public_url}/health")
-print(f"  POST {public_url}/generate   body: {{ query, mode }}")
+print(f"  POST {public_url}/generate          body: {{ query|messages, mode }}")
+print(f"  POST {public_url}/generate-stream   body: {{ query|messages }}  (SSE)")
 print()
-
 
 # ==============================================================================
 # Keep cell alive
