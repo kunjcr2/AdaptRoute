@@ -50,13 +50,13 @@ Response
 
 ## Project Stages
 
-| Stage | What Happens | Estimated Time (A100) |
-|---|---|---|
-| 1. Firewall | Pre-trained DeBERTa-v3 prompt injection detector (ProtectAI) | No training needed |
-| 2. Gating network | Fine-tune DistilBERT as a 4-class task classifier | ~10 min |
-| 3. LoRA adapters | SFT one adapter per domain on top of the base SLM | ~25 min per adapter |
-| 4. Soft merge | Wire gate probabilities into `add_weighted_adapter()` | inference-time only |
-| 5. Eval + demo | Benchmark quality delta, build Gradio UI | ~1–2 hours |
+| Stage             | What Happens                                                 | Estimated Time (A100) |
+| ----------------- | ------------------------------------------------------------ | --------------------- |
+| 1. Firewall       | Pre-trained DeBERTa-v3 prompt injection detector (ProtectAI) | No training needed    |
+| 2. Gating network | Fine-tune DistilBERT as a 4-class task classifier            | ~10 min               |
+| 3. LoRA adapters  | SFT one adapter per domain on top of the base SLM            | ~25 min per adapter   |
+| 4. Soft merge     | Wire gate probabilities into `add_weighted_adapter()`        | inference-time only   |
+| 5. Eval + demo    | Benchmark quality delta, build Gradio UI                     | ~1–2 hours            |
 
 ---
 
@@ -64,9 +64,9 @@ Response
 
 ### Base Model
 
-| Model | Params | VRAM (4-bit) | Notes |
-|---|---|---|---|
-| `Qwen2.5-1.5B` | 1.5B | ~4 GB | Primary choice — fast SFT, strong instruction following |
+| Model          | Params | VRAM (4-bit) | Notes                                                   |
+| -------------- | ------ | ------------ | ------------------------------------------------------- |
+| `Qwen2.5-1.5B` | 1.5B   | ~4 GB        | Primary choice — fast SFT, strong instruction following |
 
 Loaded in 4-bit NF4 quantization via `bitsandbytes`. Weights are fully frozen. Only the LoRA adapters are trained.
 
@@ -100,14 +100,56 @@ By focusing on high-signal specialized domains, the routing network inherently a
 
 Four domain-specific adapters trained via SFT on the base model. Each adapter is a small set of low-rank weight matrices injected into the attention layers.
 
-| Adapter | Target domain |
-|---|---|
-| `lora-code` | Python code generation and explanation |
-| `lora-math` | Step-by-step mathematical reasoning |
-| `lora-qa` | Grounded question answering from context |
-| `lora-medical` | Clinical triage and medical Q&A |
+| Adapter        | Target domain                            |
+| -------------- | ---------------------------------------- |
+| `lora-code`    | Python code generation and explanation   |
+| `lora-math`    | Step-by-step mathematical reasoning      |
+| `lora-qa`      | Grounded question answering from context |
+| `lora-medical` | Clinical triage and medical Q&A          |
 
 At inference, the gate probabilities are used as weights to blend these adapters via `peft`'s `add_weighted_adapter()`. The merged adapter is loaded onto the frozen base model for the forward pass.
+
+---
+
+## Hardware Requirements & Deployment
+
+### Inference (Recommended)
+
+**Single Consumer GPU:** Works out-of-the-box on a single **NVIDIA T4** (16 GB VRAM)
+
+- **Qwen2.5-1.5B** in 4-bit quantization: ~4 GB
+- **Firewall (DeBERTa-v3)**: ~1.5 GB
+- **Gating network (DistilBERT)**: ~250 MB
+- **Adapters (all 4 domains)**: ~200 MB total
+- **Headroom for inference graph**: ~2 GB
+
+Also compatible with:
+
+- **NVIDIA RTX series** (RTX 3070, 3080, 4090, etc.) — even better performance
+- **Modern consumer GPUs** with ≥8 GB VRAM
+- **A100 / H100** (enterprise) — overkill but works
+
+### Edge & CPU Mode
+
+**Apple Silicon (M1/M2/M3/M4):** Runs natively on NPU-accelerated cores
+
+- Ultra-low latency routing on CPU/NPU
+- Requires: `llama.cpp` integration or ONNX export (in progress)
+
+**CPU fallback:** Pure CPU inference possible
+
+- Gating network (DistilBERT) executes in ~15–30ms on modern CPUs
+- Full response generation much slower (minutes on large sequences)
+- Practical for batch/async scenarios, not real-time chat
+
+### Training
+
+Requires a GPU with ≥40 GB VRAM for comfortable training. Reference setups:
+
+- **Colab A100** (40 GB) — ~25 min per adapter, recommended
+- **RTX 4090** (24 GB) — ~45 min per adapter with careful batching
+- **V100** (32 GB) — ~60 min per adapter
+- **T4** (16 GB) — possible but slow; reduce batch size to 4
 
 ---
 
@@ -115,21 +157,21 @@ At inference, the gate probabilities are used as weights to blend these adapters
 
 ### Gating Network Training
 
-| Dataset | Label | Source |
-|---|---|---|
-| `code.json` (~10k sample) | `code` | `codeparrot/github-code` |
-| `math.json` (~10k sample) | `math` | `lighteval/MATH` |
-| `qa.json` (~10k sample) | `qa` | `rajpurkar/squad` |
+| Dataset                      | Label     | Source                                   |
+| ---------------------------- | --------- | ---------------------------------------- |
+| `code.json` (~10k sample)    | `code`    | `codeparrot/github-code`                 |
+| `math.json` (~10k sample)    | `math`    | `lighteval/MATH`                         |
+| `qa.json` (~10k sample)      | `qa`      | `rajpurkar/squad`                        |
 | `medical.json` (~10k sample) | `medical` | `lavita/ChatDoctor-HealthCareMagic-100k` |
 
 ### LoRA Adapter SFT
 
-| Adapter | Hugging Face Dataset | Size |
-|---|---|---|
-| `lora-code` | `iamtarun/python_code_instructions_18k_alpaca` | ~20k instruction-response pairs |
-| `lora-math` | `DigitalLearningGmbH/MATH-lighteval` | ~20k problems with step-by-step solutions |
-| `lora-qa` | `rajpurkar/squad` | ~20k Q&A pairs |
-| `lora-medical` | `lavita/ChatDoctor-HealthCareMagic-100k` | ~20k clinical Q&A pairs |
+| Adapter        | Hugging Face Dataset                           | Size                                      |
+| -------------- | ---------------------------------------------- | ----------------------------------------- |
+| `lora-code`    | `iamtarun/python_code_instructions_18k_alpaca` | ~20k instruction-response pairs           |
+| `lora-math`    | `DigitalLearningGmbH/MATH-lighteval`           | ~20k problems with step-by-step solutions |
+| `lora-qa`      | `rajpurkar/squad`                              | ~20k Q&A pairs                            |
+| `lora-medical` | `lavita/ChatDoctor-HealthCareMagic-100k`       | ~20k clinical Q&A pairs                   |
 
 LoRA SFT datasets are streamed dynamically via the Hugging Face Hub (no local JSONs required) with `N_SAMPLES = 20_000` each.
 
@@ -137,16 +179,16 @@ LoRA SFT datasets are streamed dynamically via the Hugging Face Hub (no local JS
 
 ## Tech Stack
 
-| Layer | Library | Role |
-|---|---|---|
-| Fine-tuning | `transformers` + `peft` | `LoraConfig`, `get_peft_model`, SFT for both gate and adapters |
-| Adapter merge | `peft` | `add_weighted_adapter()` blends adapters by gate probabilities |
-| Training loop | `trl` — `SFTTrainer` | Dataset formatting, packing, trainer config |
-| Quantization | `bitsandbytes` | 4-bit NF4 base model loading, keeps VRAM under 6 GB |
-| Data loading | `datasets` | HuggingFace datasets hub |
-| Experiment tracking | `wandb` | Loss curves, eval metrics, adapter comparison |
-| Demo UI | `gradio` | Query in → gate label + merged response out |
-| Compute | Colab A100 (40 GB) | ~25 min per adapter SFT at 1.5B scale |
+| Layer               | Library                 | Role                                                           |
+| ------------------- | ----------------------- | -------------------------------------------------------------- |
+| Fine-tuning         | `transformers` + `peft` | `LoraConfig`, `get_peft_model`, SFT for both gate and adapters |
+| Adapter merge       | `peft`                  | `add_weighted_adapter()` blends adapters by gate probabilities |
+| Training loop       | `trl` — `SFTTrainer`    | Dataset formatting, packing, trainer config                    |
+| Quantization        | `bitsandbytes`          | 4-bit NF4 base model loading, keeps VRAM under 6 GB            |
+| Data loading        | `datasets`              | HuggingFace datasets hub                                       |
+| Experiment tracking | `wandb`                 | Loss curves, eval metrics, adapter comparison                  |
+| Demo UI             | `gradio`                | Query in → gate label + merged response out                    |
+| Compute             | Colab A100 (40 GB)      | ~25 min per adapter SFT at 1.5B scale                          |
 
 ---
 
@@ -154,13 +196,13 @@ LoRA SFT datasets are streamed dynamically via the Hugging Face Hub (no local JS
 
 Same config applied to all four domain adapters.
 
-| Parameter | Value | Reason |
-|---|---|---|
-| rank (`r`) | `16` | Increased from 8 to 16 for slightly greater capacity across domain variation |
-| alpha | `32` | 2× rank — standard stable scaling |
-| dropout | `0.05` | Light regularization for small dataset sizes |
-| target modules | `q_proj, k_proj, v_proj, o_proj` | Attention projections only — faster training |
-| precision | `BF16` | A100 native, stable for SFT |
+| Parameter      | Value                            | Reason                                                                       |
+| -------------- | -------------------------------- | ---------------------------------------------------------------------------- |
+| rank (`r`)     | `16`                             | Increased from 8 to 16 for slightly greater capacity across domain variation |
+| alpha          | `32`                             | 2× rank — standard stable scaling                                            |
+| dropout        | `0.05`                           | Light regularization for small dataset sizes                                 |
+| target modules | `q_proj, k_proj, v_proj, o_proj` | Attention projections only — faster training                                 |
+| precision      | `BF16`                           | A100 native, stable for SFT                                                  |
 
 ---
 
@@ -197,18 +239,18 @@ model.set_adapter("merged")
 response = model.generate(query)
 ```
 
-For a query like *"Write a Python function that solves the Fibonacci sequence mathematically"*, the gate fires high on both `code` and `math`. The merged adapter carries expertise from both — the base model alone would produce a worse answer than either individual adapter, and a hard-routed system would pick only one.
+For a query like _"Write a Python function that solves the Fibonacci sequence mathematically"_, the gate fires high on both `code` and `math`. The merged adapter carries expertise from both — the base model alone would produce a worse answer than either individual adapter, and a hard-routed system would pick only one.
 
 ---
 
 ## Evaluation
 
-| Metric | Description | Target |
-|---|---|---|
-| Gate accuracy | % of queries routed to correct adapter on held-out test set | > 90% |
+| Metric                 | Description                                                              | Target                    |
+| ---------------------- | ------------------------------------------------------------------------ | ------------------------- |
+| Gate accuracy          | % of queries routed to correct adapter on held-out test set              | > 90%                     |
 | Response quality delta | Base model vs routed adapter on domain benchmarks (HumanEval, MATH eval) | measurable positive delta |
-| Routing latency | Gate inference time | < 10 ms |
-| Adapter merge time | `add_weighted_adapter()` call | < 100 ms |
+| Routing latency        | Gate inference time                                                      | < 10 ms                   |
+| Adapter merge time     | `add_weighted_adapter()` call                                            | < 100 ms                  |
 
 The key evaluation is a side-by-side comparison: the exact same query answered by the base model alone versus the soft-routed adapter blend. The difference in response specificity and accuracy constitutes the "quality delta".
 
@@ -269,13 +311,13 @@ In a standard MoE transformer, the gating function and the experts are trained j
 
 AdaptRoute decouples this:
 
-| | MoE (standard) | AdaptRoute |
-|---|---|---|
-| Gate training | Joint with experts | Independent classifier |
-| Expert training | Joint, end-to-end | Independent SFT per adapter |
-| Routing | Soft (differentiable) | Soft (post-hoc weight blend) |
-| Hardware | Multi-GPU required | Single A100 sufficient |
-| Expert swap cost | Cannot swap at inference | Free — adapters are files |
+|                  | MoE (standard)           | AdaptRoute                   |
+| ---------------- | ------------------------ | ---------------------------- |
+| Gate training    | Joint with experts       | Independent classifier       |
+| Expert training  | Joint, end-to-end        | Independent SFT per adapter  |
+| Routing          | Soft (differentiable)    | Soft (post-hoc weight blend) |
+| Hardware         | Multi-GPU required       | Single A100 sufficient       |
+| Expert swap cost | Cannot swap at inference | Free — adapters are files    |
 
 The tradeoff is that AdaptRoute's gate is not trained to minimize the same loss as the experts — it optimizes task classification accuracy, not generation quality. This is the research gap worth acknowledging, and measuring, in the eval.
 
