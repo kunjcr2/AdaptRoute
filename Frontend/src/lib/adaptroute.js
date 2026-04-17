@@ -1,7 +1,8 @@
 // src/lib/adaptroute.js
 // Thin client for the AdaptRoute worker. Simple JSON request/response.
 
-const WORKER_URL = import.meta.env.VITE_WORKER_URL || "http://192.168.50.213:7180";
+const WORKER_URL =
+  import.meta.env.VITE_WORKER_URL || "http://192.168.50.213:7180";
 
 const defaultHeaders = {
   "Content-Type": "application/json",
@@ -46,7 +47,7 @@ export async function sendQuery(query) {
     try {
       const body = await res.json();
       if (body?.message) msg = body.message;
-    } catch (_) { }
+    } catch (_) {}
     throw new Error(msg);
   }
 
