@@ -246,6 +246,9 @@ def process_query(query: str) -> dict:
         parts = response.split(".")
         if len(parts) > 1:
             response = ".".join(parts[:-1]).strip()
+        parts = response.split("\n")
+        if len(parts) > 1:
+            response = "\n".join(parts[:-1]).strip()
         response = response.rstrip()
 
     t_total = t_gen - t_start
