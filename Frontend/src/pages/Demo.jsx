@@ -412,9 +412,18 @@ const Message = ({ message }) => {
                 {/* Adapter + gating scores */}
                 {!isUser && !message.blocked && message.adapter && (
                     <div className="mb-3 space-y-2">
-                        <AdapterBadge domain={message.adapter} />
-                        {message.gatingScores && (
-                            <GatingBadge scores={message.gatingScores} winner={message.adapter} />
+                        {message.adapter === 'base_model' ? (
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-0.5 rounded-full border bg-gray-100 text-gray-800 border-gray-200">
+                                <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60" />
+                                base model chosen
+                            </span>
+                        ) : (
+                            <>
+                                <AdapterBadge domain={message.adapter} />
+                                {message.gatingScores && (
+                                    <GatingBadge scores={message.gatingScores} winner={message.adapter} />
+                                )}
+                            </>
                         )}
                     </div>
                 )}

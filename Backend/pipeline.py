@@ -279,7 +279,7 @@ def process_query(query: str) -> dict:
 
     gating_scores = {
         gate_id2label.get(i, str(i)).lower(): round(probs[i].item(), 4)
-        for i in range(len(probs))
+        for i in range(len(probs)) 
     }
 
     return {
