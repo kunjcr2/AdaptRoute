@@ -1,336 +1,279 @@
-# AdaptRoute — Task-Aware SLM Router with Soft LoRA Merging
+# AdaptRoute — Task-Aware SLM Router with Dynamic LoRA Switching
 
-> A learned gating network that dynamically blends LoRA expert adapters at inference time — sparse MoE-style routing without the end-to-end training cost. Built for edge devices where small models must punch above their weight.
+> A learned gating network that dynamically routes queries to domain-specific LoRA expert adapters at inference time — MoE-style routing without end-to-end training cost. One frozen base model, multiple lightweight experts, zero cloud dependency.
 
 ---
 
 ## What Is This?
 
-Small language models (SLMs) are the only practical option for edge deployment — phones, embedded systems, local inference boxes, anything without a data center behind it. But SLMs have a well-known problem: they are generalists that do okay at everything and excel at nothing. A 1.5B parameter model asked to write production Python, solve a differential equation, and summarize a legal document will struggle at all three.
+Small language models (SLMs) are the practical option for real-world deployment — local inference, edge devices, anything without a data center. But SLMs are generalists that do okay at everything and excel at nothing. A 1.5B parameter model asked to write production Python, solve a differential equation, and answer a medical question will struggle at all three.
 
-The standard answer is task-specific fine-tuning — but that means shipping a separate model per task, which blows the memory and storage budget on any real edge device.
-
-AdaptRoute solves this differently: one frozen base model lives on the device, several lightweight LoRA adapters (each a few MB) are stored alongside it, and a fast gating network running entirely on-device decides which adapters to blend for each query. The device gets the equivalent of multiple specialized models for the cost of one — with a routing layer small enough to run on CPU in under 10ms.
-
-This is conceptually identical to the routing gate in a Mixture-of-Experts (MoE) model — except decoupled from training, making it practical to build, deploy, and run without multi-GPU infrastructure.
+AdaptRoute fixes this: **one frozen base model** + **multiple lightweight LoRA adapters** (a few MB each) + **a fast gating network** that decides which adapter to use per query. The system gets the equivalent of multiple specialized models for the cost of one.
 
 ```
 User query
     │
     ▼
-┌─────────────────────────────────────────────┐
-│     Firewall (DeBERTa-v3 — ProtectAI)       │
-│                                             │
-│  Binary: [Clear] | [Malicious/OOD]          │  <- input filtering
-└─────────────────────────────────────────────┘
-    │
-    │ (If Cleared)
+┌──────────────────────────────────────┐
+│   🛡️  Firewall (DeBERTa-v3)         │
+│   Binary: SAFE | INJECTION           │  ← blocks prompt injections
+└──────────────────────────────────────┘
+    │  (if safe)
     ▼
-┌─────────────────────────────────────────────┐
-│          Gating network (DistilBERT)        │
-│                                             │
-│  p(code), p(math), p(qa), p(medical)        │  <- task routing
-└─────────────────────────────────────────────┘
+┌──────────────────────────────────────┐
+│   🧠  Gating Network (DistilBERT)   │
+│   5-class: code|math|qa|medical|     │  ← task routing
+│            general                    │
+└──────────────────────────────────────┘
     │
-    ▼
-Soft adapter merge  <-  add_weighted_adapter(adapters, weights)
+    ├── code/math/qa/medical → Load domain LoRA adapter
+    ├── general              → Use base model (no adapter)
     │
     ▼
-Base SLM + merged LoRA adapter
+┌──────────────────────────────────────┐
+│   Qwen2.5-1.5B (bfloat16)           │
+│   + dynamically loaded LoRA adapter  │  ← generation
+└──────────────────────────────────────┘
     │
     ▼
-Response
+  Response
 ```
-
-**Hard routing** (pick one adapter) is the argmax version. **Soft routing** (blend top-k adapters by probability) is what this project implements — it handles ambiguous queries gracefully and maps directly to the MoE gating mechanism.
-
-> **Edge device motivation:** LoRA adapters for a 1.5B model are typically 10–40 MB each. Storing four domain adapters costs less than 200 MB total — a fraction of the base model's footprint. The gating network (DistilBERT) is 250 MB and runs on CPU. The entire system fits on a mid-range mobile device or single-board computer, with no cloud dependency.
-
----
-
-## Project Stages
-
-| Stage             | What Happens                                                 | Estimated Time (A100) |
-| ----------------- | ------------------------------------------------------------ | --------------------- |
-| 1. Firewall       | Pre-trained DeBERTa-v3 prompt injection detector (ProtectAI) | No training needed    |
-| 2. Gating network | Fine-tune DistilBERT as a 4-class task classifier            | ~10 min               |
-| 3. LoRA adapters  | SFT one adapter per domain on top of the base SLM            | ~25 min per adapter   |
-| 4. Soft merge     | Wire gate probabilities into `add_weighted_adapter()`        | inference-time only   |
-| 5. Eval + demo    | Benchmark quality delta, build Gradio UI                     | ~1–2 hours            |
-
----
-
-## Architecture
-
-### Base Model
-
-| Model          | Params | VRAM (4-bit) | Notes                                                   |
-| -------------- | ------ | ------------ | ------------------------------------------------------- |
-| `Qwen2.5-1.5B` | 1.5B   | ~4 GB        | Primary choice — fast SFT, strong instruction following |
-
-Loaded in 4-bit NF4 quantization via `bitsandbytes`. Weights are fully frozen. Only the LoRA adapters are trained.
-
----
-
-### Firewall
-
-A pre-trained DeBERTa-v3-based prompt injection detector from [ProtectAI](https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2) that acts as the first line of defense. It classifies queries as `SAFE` or `INJECTION`, blocking adversarial prompt injections, jailbreaks, and hidden system-note attacks before they reach the gating network.
-
-**Model Path:** [protectai/deberta-v3-base-prompt-injection-v2](https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2)
-
-**Why a pre-trained model:** Prompt injection detection requires an extremely diverse training set spanning short benign questions, code snippets, long-form text, and sophisticated hidden-payload attacks. ProtectAI's model was trained on hundreds of thousands of such samples, vastly outperforming any small custom-trained classifier. By decoupling the firewall from the gating network, we can swap security models without retraining the task-specific routing logic.
-
----
-
-### Gating Network
-
-A multiclass classifier built on `distilbert-base-uncased`. Takes the raw user query as input and outputs a softmax distribution over **4 domain-specific classes**.
-
-**Model Path:** [kunjcr2/gating-bert-adaptroute](https://huggingface.co/kunjcr2/gating-bert-adaptroute)
-
-**Classes:** `code` · `math` · `qa` · `medical`
-
-**Why DistilBERT:** 66M parameters, ~5ms inference on CPU. On an edge device, the gate runs before every query—it must add near-zero latency or it becomes the bottleneck.
-
-By focusing on high-signal specialized domains, the routing network inherently acts as a robust filter. Queries that don't align with the primary expert domains are assigned low probability across the board. This specialization reduces the attack surface compared to a general-purpose SLM.
-
----
-
-### LoRA Expert Adapters
-
-Four domain-specific adapters trained via SFT on the base model. Each adapter is a small set of low-rank weight matrices injected into the attention layers.
-
-| Adapter        | Target domain                            |
-| -------------- | ---------------------------------------- |
-| `lora-code`    | Python code generation and explanation   |
-| `lora-math`    | Step-by-step mathematical reasoning      |
-| `lora-qa`      | Grounded question answering from context |
-| `lora-medical` | Clinical triage and medical Q&A          |
-
-At inference, the gate probabilities are used as weights to blend these adapters via `peft`'s `add_weighted_adapter()`. The merged adapter is loaded onto the frozen base model for the forward pass.
-
----
-
-## Hardware Requirements & Deployment
-
-### Inference (Recommended)
-
-**Single Consumer GPU:** Works out-of-the-box on a single **NVIDIA T4** (16 GB VRAM)
-
-- **Qwen2.5-1.5B** in 4-bit quantization: ~4 GB
-- **Firewall (DeBERTa-v3)**: ~1.5 GB
-- **Gating network (DistilBERT)**: ~250 MB
-- **Adapters (all 4 domains)**: ~200 MB total
-- **Headroom for inference graph**: ~2 GB
-
-Also compatible with:
-
-- **NVIDIA RTX series** (RTX 3070, 3080, 4090, etc.) — even better performance
-- **Modern consumer GPUs** with ≥8 GB VRAM
-- **A100 / H100** (enterprise) — overkill but works
-
-### Edge & CPU Mode
-
-**Apple Silicon (M1/M2/M3/M4):** Runs natively on NPU-accelerated cores
-
-- Ultra-low latency routing on CPU/NPU
-- Requires: `llama.cpp` integration or ONNX export (in progress)
-
-**CPU fallback:** Pure CPU inference possible
-
-- Gating network (DistilBERT) executes in ~15–30ms on modern CPUs
-- Full response generation much slower (minutes on large sequences)
-- Practical for batch/async scenarios, not real-time chat
-
-### Training
-
-Requires a GPU with ≥40 GB VRAM for comfortable training. Reference setups:
-
-- **Colab A100** (40 GB) — ~25 min per adapter, recommended
-- **RTX 4090** (24 GB) — ~45 min per adapter with careful batching
-- **V100** (32 GB) — ~60 min per adapter
-- **T4** (16 GB) — possible but slow; reduce batch size to 4
-
----
-
-## Datasets
-
-### Gating Network Training
-
-| Dataset                      | Label     | Source                                   |
-| ---------------------------- | --------- | ---------------------------------------- |
-| `code.json` (~10k sample)    | `code`    | `codeparrot/github-code`                 |
-| `math.json` (~10k sample)    | `math`    | `lighteval/MATH`                         |
-| `qa.json` (~10k sample)      | `qa`      | `rajpurkar/squad`                        |
-| `medical.json` (~10k sample) | `medical` | `lavita/ChatDoctor-HealthCareMagic-100k` |
-
-### LoRA Adapter SFT
-
-| Adapter        | Hugging Face Dataset                           | Size                                      |
-| -------------- | ---------------------------------------------- | ----------------------------------------- |
-| `lora-code`    | `iamtarun/python_code_instructions_18k_alpaca` | ~20k instruction-response pairs           |
-| `lora-math`    | `DigitalLearningGmbH/MATH-lighteval`           | ~20k problems with step-by-step solutions |
-| `lora-qa`      | `rajpurkar/squad`                              | ~20k Q&A pairs                            |
-| `lora-medical` | `lavita/ChatDoctor-HealthCareMagic-100k`       | ~20k clinical Q&A pairs                   |
-
-LoRA SFT datasets are streamed dynamically via the Hugging Face Hub (no local JSONs required) with `N_SAMPLES = 20_000` each.
-
----
-
-## Tech Stack
-
-| Layer               | Library                 | Role                                                           |
-| ------------------- | ----------------------- | -------------------------------------------------------------- |
-| Fine-tuning         | `transformers` + `peft` | `LoraConfig`, `get_peft_model`, SFT for both gate and adapters |
-| Adapter merge       | `peft`                  | `add_weighted_adapter()` blends adapters by gate probabilities |
-| Training loop       | `trl` — `SFTTrainer`    | Dataset formatting, packing, trainer config                    |
-| Quantization        | `bitsandbytes`          | 4-bit NF4 base model loading, keeps VRAM under 6 GB            |
-| Data loading        | `datasets`              | HuggingFace datasets hub                                       |
-| Experiment tracking | `wandb`                 | Loss curves, eval metrics, adapter comparison                  |
-| Demo UI             | `gradio`                | Query in → gate label + merged response out                    |
-| Compute             | Colab A100 (40 GB)      | ~25 min per adapter SFT at 1.5B scale                          |
-
----
-
-## LoRA Configuration
-
-Same config applied to all four domain adapters.
-
-| Parameter      | Value                            | Reason                                                                       |
-| -------------- | -------------------------------- | ---------------------------------------------------------------------------- |
-| rank (`r`)     | `16`                             | Increased from 8 to 16 for slightly greater capacity across domain variation |
-| alpha          | `32`                             | 2× rank — standard stable scaling                                            |
-| dropout        | `0.05`                           | Light regularization for small dataset sizes                                 |
-| target modules | `q_proj, k_proj, v_proj, o_proj` | Attention projections only — faster training                                 |
-| precision      | `BF16`                           | A100 native, stable for SFT                                                  |
-
----
-
-## How Soft Routing Works
-
-This is the key mechanism that makes AdaptRoute different from a simple classifier-to-adapter pipeline.
-
-```python
-from peft import PeftModel
-
-# 1. Firewall check (binary model)
-is_clean = firewall_model(query)
-if not is_clean:
-    return "Query blocked by firewall."
-
-# 2. Gate outputs softmax probabilities
-probs = gate_model(query)
-# e.g. {"code": 0.72, "math": 0.21, "qa": 0.05, "medical": 0.02}
-
-# Take top-2 adapters and their weights
-top_adapters = ["lora-code", "lora-math"]
-top_weights   = [0.72, 0.21]
-
-# Merge adapters weighted by gate output
-model.add_weighted_adapter(
-    adapters=top_adapters,
-    weights=top_weights,
-    adapter_name="merged",
-    combination_type="linear"
-)
-model.set_adapter("merged")
-
-# Single forward pass with blended expertise
-response = model.generate(query)
-```
-
-For a query like _"Write a Python function that solves the Fibonacci sequence mathematically"_, the gate fires high on both `code` and `math`. The merged adapter carries expertise from both — the base model alone would produce a worse answer than either individual adapter, and a hard-routed system would pick only one.
-
----
-
-## Evaluation
-
-| Metric                 | Description                                                              | Target                    |
-| ---------------------- | ------------------------------------------------------------------------ | ------------------------- |
-| Gate accuracy          | % of queries routed to correct adapter on held-out test set              | > 90%                     |
-| Response quality delta | Base model vs routed adapter on domain benchmarks (HumanEval, MATH eval) | measurable positive delta |
-| Routing latency        | Gate inference time                                                      | < 10 ms                   |
-| Adapter merge time     | `add_weighted_adapter()` call                                            | < 100 ms                  |
-
-The key evaluation is a side-by-side comparison: the exact same query answered by the base model alone versus the soft-routed adapter blend. The difference in response specificity and accuracy constitutes the "quality delta".
 
 ---
 
 ## Project Structure
 
 ```
-adaproute/
-├── data/
-│   └── prepare_datasets.py       # Download and label task datasets
-├── gate/
-│   ├── train_gate.py             # Fine-tune DistilBERT classifier
-│   └── evaluate_gate.py          # Accuracy, confusion matrix
-├── adapters/
-│   ├── train_adapter.py          # SFT one LoRA adapter (pass --domain flag)
-│   └── merge_adapters.py         # add_weighted_adapter() inference wrapper
-├── eval/
-│   └── benchmark.py              # Quality delta across domains
-├── demo/
-│   └── app.py                    # Gradio demo
+AdaptRoute/
+├── Backend/
+│   ├── app.py                 # FastAPI server (wraps pipeline)
+│   ├── pipeline.py            # HF Transformers inference pipeline
+│   ├── pipeline_vllm.py       # vLLM inference pipeline (10x faster)
+│   └── requirements.txt
+├── Frontend/
+│   └── src/
+│       ├── pages/
+│       │   ├── Home.jsx       # Landing page
+│       │   ├── Demo.jsx       # Live inference demo
+│       │   ├── Architecture.jsx
+│       │   ├── Evaluation.jsx
+│       │   └── Firewall.jsx
+│       └── lib/
+│           └── adaptroute.js  # API client
 ├── notebooks/
-│   ├── AdaptRoute.ipynb          # End-to-end walkthrough
-│   └── Adapters_Training_v2.ipynb# Sequential LoRA SFT pipeline
+│   ├── train_gating_v2.py     # Gating network training (5-class, H200)
+│   ├── Adapters_Training_v5.py # LoRA adapter SFT pipeline
+│   ├── train_firewall_v3.py   # Firewall training
+│   └── Eval.ipynb             # Evaluation notebook
+├── datasets/
+│   ├── code.json              # 7k code queries
+│   ├── math.json              # 7.5k math queries
+│   ├── qa.json                # 10k QA queries
+│   └── medical.json           # 10k medical queries
 └── README.md
 ```
 
 ---
 
-## Setup
+## Architecture
+
+### Firewall — Prompt Injection Detection
+
+| Component | Details |
+|-----------|---------|
+| Model | [protectai/deberta-v3-base-prompt-injection-v2](https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2 ) |
+| Type | Binary classifier (SAFE / INJECTION) |
+| Size | ~180 MB |
+| Runs on | CPU (keeps GPU free for generation) |
+
+Blocks adversarial prompt injections, jailbreaks, and hidden system-note attacks before they reach the gating network.
+
+### Gating Network — Task Router
+
+| Component | Details |
+|-----------|---------|
+| Model | [kunjcr2/gating-bert-adaptroute](https://huggingface.co/kunjcr2/gating-bert-adaptroute ) |
+| Base | `distilbert-base-uncased` + LoRA (merged) |
+| Classes | `code` · `math` · `qa` · `medical` · `general` |
+| Latency | ~5ms on CPU |
+| Training | `notebooks/train_gating_v2.py` |
+
+The 5th `general` class ensures queries like *"How do I open a tight jar?"* or *"What is the history of the internet?"* get routed to the base model without any adapter — instead of being misclassified into a specialist domain.
+
+### LoRA Expert Adapters
+
+Four domain-specific adapters trained via SFT on Qwen2.5-1.5B:
+
+| Adapter | HuggingFace Repo | Domain |
+|---------|-------------------|--------|
+| `lora-code` | [kunjcr2/code-adaptroute-v3](https://huggingface.co/kunjcr2/code-adaptroute-v3 ) | Python code generation |
+| `lora-math` | [kunjcr2/math-adaptroute-v3](https://huggingface.co/kunjcr2/math-adaptroute-v3 ) | Step-by-step math reasoning |
+| `lora-qa` | [kunjcr2/qa-adaptroute-v3](https://huggingface.co/kunjcr2/qa-adaptroute-v3 ) | Factual question answering |
+| `lora-medical` | [kunjcr2/medical-adaptroute-v3](https://huggingface.co/kunjcr2/medical-adaptroute-v3 ) | Clinical triage & medical Q&A |
+
+### Base Model
+
+| Model | Params | Precision | Attention |
+|-------|--------|-----------|-----------|
+| [Qwen/Qwen2.5-1.5B](https://huggingface.co/Qwen/Qwen2.5-1.5B ) | 1.5B | bfloat16 | SDPA (Flash Attention) |
+
+Weights are fully frozen. Only LoRA adapters are trained.
+
+---
+
+## Quick Start
+
+### Backend (SSH / GPU Server)
 
 ```bash
-pip install transformers peft trl bitsandbytes datasets gradio wandb
+# 1. Create working directory
+mkdir Backend && cd Backend
+
+# 2. Install dependencies
+pip install fastapi uvicorn[standard] torch transformers peft accelerate huggingface_hub
+
+# 3. Create pipeline.py and app.py (copy from repo)
+nano pipeline.py
+nano app.py
+
+# 4. Set HuggingFace token and run
+export HF_TOKEN="hf_your_token_here"
+python app.py
 ```
 
+The server starts on `0.0.0.0:7180`, downloads all adapter weights on first run.
+
+### Frontend (Local)
+
 ```bash
-# 1. Prepare datasets
-python data/prepare_datasets.py
+cd Frontend
+npm install
+npm run dev
+```
 
-# 2. Train the gating network
-python gate/train_gate.py
+Update `WORKER_URL` in `Frontend/src/lib/adaptroute.js` to point to your server IP.
 
-# 3. Train LoRA adapters (run once per domain)
-python adapters/train_adapter.py --domain code
-python adapters/train_adapter.py --domain math
-python adapters/train_adapter.py --domain qa
-python adapters/train_adapter.py --domain medical
+### Test
 
-# 4. Run the demo
-python demo/app.py
+```bash
+# Health check
+curl http://your-server:7180/health
+
+# Inference
+curl -X POST http://your-server:7180/generate \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Write a Python function to sort a list"}'
+```
+
+---
+
+## Backend Options
+
+### Standard Pipeline (`pipeline.py`)
+Uses HuggingFace Transformers for generation. Simpler setup, compatible with any GPU.
+
+### vLLM Pipeline (`pipeline_vllm.py`)
+Uses [vLLM](https://github.com/vllm-project/vllm ) for ~10x faster inference with native LoRA hot-swapping. Recommended for production.
+
+To switch: change `import pipeline` → `import pipeline_vllm as pipeline` in `app.py`.
+
+---
+
+## Training
+
+### Gating Network (5-class)
+
+```bash
+cd notebooks
+export HF_TOKEN="hf_..."
+python train_gating_v2.py
+```
+
+Trains a DistilBERT + LoRA classifier with 5 classes. The `general` class is built from `tatsu-lab/alpaca` + handcrafted queries to prevent misrouting.
+
+**H200 optimised:** batch_size=128, bf16, 4 dataloader workers.
+
+### LoRA Adapters
+
+```bash
+cd notebooks
+python Adapters_Training_v5.py
+```
+
+Trains all 4 domain adapters sequentially via SFT. Uses LoRA with:
+
+| Parameter | Value |
+|-----------|-------|
+| Rank (`r`) | 16 |
+| Alpha | 32 |
+| Dropout | 0.05 |
+| Target modules | `q_proj, k_proj, v_proj, o_proj` |
+| Precision | bfloat16 |
+
+---
+
+## API
+
+### `GET /health`
+Returns server status and loaded model info.
+
+### `POST /generate`
+```json
+// Request
+{ "query": "What are the symptoms of diabetes?" }
+
+// Response
+{
+  "status": "success",
+  "response": "The common symptoms of diabetes include...",
+  "adapter_used": "medical",
+  "gating_confidence": 0.9987,
+  "gating_scores": {
+    "code": 0.0001,
+    "math": 0.0002,
+    "qa": 0.0010,
+    "medical": 0.9987,
+    "general": 0.0000
+  },
+  "firewall_label": "SAFE",
+  "time_seconds": 2.14
+}
 ```
 
 ---
 
 ## Connection to MoE
 
-In a standard MoE transformer, the gating function and the experts are trained jointly end-to-end. The gate learns to route tokens to the experts that minimize loss — but this requires all experts to exist inside the model at training time, on the same hardware, with a specialized distributed training setup.
-
-AdaptRoute decouples this:
+AdaptRoute is a decoupled Mixture of Experts — the routing gate and experts are trained independently, making it practical without multi-GPU infrastructure.
 
 |                  | MoE (standard)           | AdaptRoute                   |
 | ---------------- | ------------------------ | ---------------------------- |
 | Gate training    | Joint with experts       | Independent classifier       |
 | Expert training  | Joint, end-to-end        | Independent SFT per adapter  |
-| Routing          | Soft (differentiable)    | Soft (post-hoc weight blend) |
-| Hardware         | Multi-GPU required       | Single A100 sufficient       |
+| Routing          | Soft (differentiable)    | Hard routing by gate output  |
+| Hardware         | Multi-GPU required       | Single GPU sufficient        |
 | Expert swap cost | Cannot swap at inference | Free — adapters are files    |
 
-The tradeoff is that AdaptRoute's gate is not trained to minimize the same loss as the experts — it optimizes task classification accuracy, not generation quality. This is the research gap worth acknowledging, and measuring, in the eval.
+---
+
+## Tech Stack
+
+| Layer | Library | Role |
+|-------|---------|------|
+| Inference server | `FastAPI` + `uvicorn` | REST API for frontend |
+| Generation | `transformers` / `vllm` | Base model + adapter inference |
+| Adapter management | `peft` | LoRA loading, merging, swapping |
+| Training | `trl` — `SFTTrainer` | Supervised fine-tuning |
+| Frontend | React + Vite | Demo UI with live inference |
+| Compute | NVIDIA H200 (SSH) | Training & inference |
 
 ---
 
 ## References
 
-- [PEFT library — `add_weighted_adapter`](https://huggingface.co/docs/peft)
-- [LoRA: Low-Rank Adaptation of Large Language Models](https://arxiv.org/abs/2106.09685)
-- [Mixtral of Experts (MoE reference)](https://arxiv.org/abs/2401.04088)
-- [TRL — SFTTrainer](https://huggingface.co/docs/trl)
-- [Qwen2.5 model family](https://huggingface.co/Qwen)
-- [iamtarun/python_code_instructions_18k_alpaca](https://huggingface.co/datasets/iamtarun/python_code_instructions_18k_alpaca)
-- [lighteval/MATH](https://huggingface.co/datasets/lighteval/MATH)
-- [rajpurkar/squad_v2](https://huggingface.co/datasets/rajpurkar/squad_v2)
-- [lavita/ChatDoctor-HealthCareMagic-100k](https://huggingface.co/datasets/lavita/ChatDoctor-HealthCareMagic-100k)
+- [LoRA: Low-Rank Adaptation of Large Language Models](https://arxiv.org/abs/2106.09685 )
+- [Mixtral of Experts](https://arxiv.org/abs/2401.04088 )
+- [PEFT library](https://huggingface.co/docs/peft )
+- [vLLM](https://github.com/vllm-project/vllm )
+- [Qwen2.5 model family](https://huggingface.co/Qwen )
+- [ProtectAI prompt injection detector](https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2 )
