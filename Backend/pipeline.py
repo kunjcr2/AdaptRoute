@@ -24,7 +24,7 @@ else:
 # Adjust these repository names based on your latest Hugging Face iterations (e.g. v3 vs v2)
 # ==============================================================================
 FIREWALL_MODEL = "protectai/deberta-v3-base-prompt-injection-v2"
-GATING_MODEL = "kunjcr2/gating-adaptroute"
+GATING_MODEL = "kunjcr2/gating-bert-adaptroute"
 BASE_MODEL = "Qwen/Qwen2.5-1.5B"
 
 ADAPTER_REPOS = {
