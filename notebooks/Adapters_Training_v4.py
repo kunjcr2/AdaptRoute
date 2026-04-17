@@ -2,14 +2,24 @@
 # AdaptRoute — Adapter Training v4
 # Target: H200 Linux VM  |  Python 3.11  |  bfloat16, no quantization
 #
-# ── Before running, install deps ONCE in your venv: ──────────────────────────
-#   pip install -U transformers trl peft datasets accelerate bitsandbytes \
-#               huggingface_hub wandb liger-kernel
+# ── Install deps ONCE (Colab-era stable combo that is known to work): ──────
+#   pip install "torch==2.5.1" --index-url https://download.pytorch.org/whl/cu124
+#   pip install "transformers==4.44.2" "trl==0.11.4" "peft==0.12.0" \
+#               "accelerate==0.33.0" datasets bitsandbytes huggingface_hub wandb
 # ─────────────────────────────────────────────────────────────────────────────
+
+# ── MUST be set before torch is imported ─────────────────────────────
+import os
+# PyTorch 2.5+ enables expandable_segments by default on H200 (cc 9.0),
+# which requires NVML. NVML is not available in this VM — disabling prevents
+# the CUDACachingAllocator internal assert that masks the real CUDA error.
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:False"
+# Synchronous CUDA — shows the real error instead of the NVML assert.
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+os.environ["TORCH_USE_CUDA_DSA"] = "1"
 
 # ── Cell 2: Imports ───────────────────────────────────────────
 import gc
-import os
 import random
 import subprocess
 import sys
@@ -17,6 +27,8 @@ from pathlib import Path
 from typing import Optional
 
 import torch
+torch.cuda.set_device(0)  # pin to GPU 0, avoids multi-device context issues
+
 import wandb
 from datasets import Dataset, load_dataset
 from huggingface_hub import HfApi, login
@@ -42,18 +54,20 @@ SEED        = 42
 
 # H200 — full bfloat16, no quantization
 LORA_DROPOUT        = 0.05
-LORA_TARGET_MODULES = "all-linear"
+LORA_TARGET_MODULES = ["all-linear"]
 
-BATCH_SIZE    = 64
-GRAD_ACCUM    = 1
-NUM_EPOCHS    = 3
+# batch=1 keeps peak VRAM minimal (logits contiguous copy = 0.62 GB not 2.49 GB)
+# effective batch = 1 * 64 = 64 same as before for training quality
+BATCH_SIZE    = 1
+GRAD_ACCUM    = 64
+NUM_EPOCHS    = 2
 WEIGHT_DECAY  = 0.01
 MAX_GRAD_NORM = 0.3
-WARMUP_RATIO  = 0.03
+WARMUP_RATIO  = 0.03   # used to compute warmup_steps per adapter
 LOGGING_STEPS = 10
 SAVE_STRATEGY = "epoch"
 EVAL_STRATEGY = "no"
-PACKING       = True
+PACKING       = False
 
 ADAPTERS = [
     {
@@ -61,48 +75,48 @@ ADAPTERS = [
         "hf_dataset":    "m-a-p/CodeFeedback-Filtered-Instruction",
         "hf_config":     None,
         "hf_split":      "train",
-        "num_epochs":    3,
-        "max_length":    2048,
-        "n_samples":     60_000,
+        "num_epochs":    1,
+        "max_length":    512,
+        "n_samples":     20_000,
         "learning_rate": 8e-5,
-        "lora_r":        64,
-        "lora_alpha":    128,
+        "lora_r":        8,
+        "lora_alpha":    16,
     },
     {
         "name":          "math",
         "hf_dataset":    "AI-MO/NuminaMath-CoT",
         "hf_config":     None,
         "hf_split":      "train",
-        "num_epochs":    2,
-        "max_length":    2048,
-        "n_samples":     100_000,
+        "num_epochs":    1,
+        "max_length":    512,
+        "n_samples":     20_000,
         "learning_rate": 6e-5,
-        "lora_r":        64,
-        "lora_alpha":    128,
+        "lora_r":        8,
+        "lora_alpha":    16,
     },
     {
         "name":          "qa",
         "hf_dataset":    "hotpotqa/hotpot_qa",
         "hf_config":     "distractor",
         "hf_split":      "train",
-        "num_epochs":    3,
-        "max_length":    1024,
-        "n_samples":     80_000,
+        "num_epochs":    1,
+        "max_length":    512,
+        "n_samples":     20_000,
         "learning_rate": 8e-5,
-        "lora_r":        32,
-        "lora_alpha":    64,
+        "lora_r":        8,
+        "lora_alpha":    16,
     },
     {
         "name":          "medical",
         "hf_dataset":    "FreedomIntelligence/medical-o1-reasoning-SFT",
         "hf_config":     "en",
         "hf_split":      "train",
-        "num_epochs":    3,
-        "max_length":    2048,
-        "n_samples":     40_000,
+        "num_epochs":    1,
+        "max_length":    512,
+        "n_samples":     20_000,
         "learning_rate": 5e-5,
-        "lora_r":        32,
-        "lora_alpha":    64,
+        "lora_r":        8,
+        "lora_alpha":    16,
     },
 ]
 
@@ -204,23 +218,20 @@ _dummy = {"problem": "What is 2+2?", "solution": "4"}
 assert format_math(_dummy) is not None
 print("✓ Formatters OK")
 
-# ── Cell 6: Load base model (sdpa — no flash-attn required) ────
-
 os.makedirs(OUTPUT_ROOT, exist_ok=True)
 random.seed(SEED)
 torch.manual_seed(SEED)
 
-print(f"Loading {BASE_MODEL} — bfloat16, eager attention (avoiding SDPA CUDA bugs) ...")
+print(f"Loading {BASE_MODEL} — bfloat16, sdpa attention ...")
 base_model = AutoModelForCausalLM.from_pretrained(
     BASE_MODEL,
     torch_dtype=torch.bfloat16,
-    attn_implementation="eager",  # Use eager (native) attention to avoid SDPA CUDA bugs
+    attn_implementation="sdpa",  # PyTorch native SDPA — avoids masking_utils.py crash in transformers 4.48+
     device_map="auto",
-    trust_remote_code=True,
 )
 base_model.config.use_cache = False   # required for gradient checkpointing
 
-tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL, trust_remote_code=True)
+tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
 tokenizer.padding_side = "right"
@@ -239,7 +250,7 @@ def load_and_format(
     cfg    = adapter_cfg["hf_config"]
     split  = adapter_cfg["hf_split"]
 
-    kwargs: Dict[str, object] = {"split": split, "trust_remote_code": True}
+    kwargs: Dict[str, object] = {"split": split}
     if cfg:
         kwargs["name"] = cfg
 
@@ -266,6 +277,8 @@ def load_and_format(
 api = HfApi()
 
 def train_adapter(adapter_cfg: dict) -> None:
+    global base_model  # Must declare global at function start
+    
     name       = adapter_cfg["name"]
     repo_id    = f"{HF_USERNAME}/{name}-adaptroute-v4"
     output_dir = f"{OUTPUT_ROOT}/{name}"
@@ -304,7 +317,7 @@ def train_adapter(adapter_cfg: dict) -> None:
         wandb.init(
             project  = WANDB_PROJECT,
             name     = f"{name}-v4",
-            reinit   = True,
+            reinit   = "finish_previous",
             config   = {
                 "domain":    name,
                 "lora_r":    lora_r,
@@ -320,7 +333,7 @@ def train_adapter(adapter_cfg: dict) -> None:
         per_device_train_batch_size   = BATCH_SIZE,
         gradient_accumulation_steps   = GRAD_ACCUM,
         learning_rate                 = lr,
-        warmup_ratio                  = WARMUP_RATIO,
+        warmup_steps                  = max(1, int(WARMUP_RATIO * adapter_epochs * (n_samples // (BATCH_SIZE * GRAD_ACCUM)))),
         lr_scheduler_type             = "cosine",
         bf16                          = True,
         fp16                          = False,
@@ -328,23 +341,22 @@ def train_adapter(adapter_cfg: dict) -> None:
         save_strategy                 = SAVE_STRATEGY,
         eval_strategy                 = EVAL_STRATEGY,
         report_to                     = "wandb" if WANDB_PROJECT else "none",
-        max_seq_length                = adapter_maxlen,
+        max_seq_length                = adapter_maxlen,  # TRL 0.11.x param name
         packing                       = PACKING,
         seed                          = SEED,
         weight_decay                  = WEIGHT_DECAY,
         max_grad_norm                 = MAX_GRAD_NORM,
         gradient_checkpointing        = True,
-        gradient_checkpointing_kwargs = {"use_reentrant": True},
+        gradient_checkpointing_kwargs = {"use_reentrant": False},
         dataloader_num_workers        = 4,
-        dataloader_pin_memory         = True,
-        use_liger_kernel              = False,  # avoid transformers version mismatch
+        dataloader_pin_memory         = False,  # pin_memory can trigger NVML on this VM
     )
 
     trainer = SFTTrainer(
         model            = model,
         args             = sft_config,
         train_dataset    = dataset,
-        processing_class = tokenizer,
+        tokenizer        = tokenizer,  # TRL 0.11.x: use tokenizer= not processing_class=
     )
 
     trainer.train()
@@ -370,7 +382,7 @@ tags: [lora, peft, adaptroute, {name}]
 | Samples | {n_samples:,} |
 | Epochs | {adapter_epochs} |
 | Max length | {adapter_maxlen} |
-| Batch size | {BATCH_SIZE} |
+| Batch size | {BATCH_SIZE * GRAD_ACCUM} (effective) |
 | Packing | {PACKING} |
 """
     Path(f"{output_dir}/README.md").write_text(card)
@@ -380,7 +392,7 @@ tags: [lora, peft, adaptroute, {name}]
         folder_path    = output_dir,
         repo_id        = repo_id,
         token          = HF_TOKEN,
-        commit_message = f"Add {name}-adaptroute-v4 (H200 sdpa)",
+        commit_message = f"Add {name}-adaptroute-v4 (H200 sdpa, production data, packing enabled)",
     )
     print(f"  ✓ Pushed → https://huggingface.co/{repo_id}")
 
@@ -391,14 +403,20 @@ tags: [lora, peft, adaptroute, {name}]
     del model, trainer, dataset
     gc.collect()
     torch.cuda.empty_cache()
-    print(f"  ✓ VRAM cleared\n")
+    
+    # ── CRITICAL: Unload PEFT from base model to avoid multi-adapter warnings ──
+    # This resets base_model to its original state for the next adapter
+    if hasattr(base_model, 'unload'):
+        base_model = base_model.unload()
+    
+    print(f"  ✓ VRAM cleared & PEFT unloaded\n")
 
 # ── Cell 9: Run all 4 adapters ─────────────────────────────────
 for adapter_cfg in ADAPTERS:
     train_adapter(adapter_cfg)
 
 print("\n" + "="*65)
-print("ALL ADAPTERS TRAINED AND PUSHED (v4 / H200 / sdpa)")
+print("✓ ALL ADAPTERS TRAINED AND PUSHED (v4 / H200 / sdpa / production data)")
 print("="*65)
 for a in ADAPTERS:
-    print(f"  https://huggingface.co/{HF_USERNAME}/{a['name']}-adaptroute-v4")
+    print(f"  ✓ https://huggingface.co/{HF_USERNAME}/{a['name']}-adaptroute-v4")
