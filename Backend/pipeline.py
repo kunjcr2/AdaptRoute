@@ -198,17 +198,18 @@ def process_query(query: str) -> dict:
     
     if winning_domain is not None:
         # Load adapter only if above threshold
-        # Use HuggingFace repo ID instead of local path for proper PEFT loading
-        adapter_repo_id = ADAPTER_REPOS[winning_domain]
+        # Prefer local adapter if available, otherwise use HuggingFace repo ID
+        local_adapter_path = os.path.join(ADAPTERS_DIR, winning_domain)
+        adapter_source = local_adapter_path if os.path.exists(local_adapter_path) else ADAPTER_REPOS[winning_domain]
 
         if not isinstance(base_model, PeftModel):
             # First time loading an adapter
-            base_model = PeftModel.from_pretrained(base_model, adapter_repo_id, adapter_name=winning_domain)
+            base_model = PeftModel.from_pretrained(base_model, adapter_source, adapter_name=winning_domain)
             global_systems["base_model"] = base_model
         else:
             # Load if not already present in memory
             if winning_domain not in base_model.peft_config:
-                base_model.load_adapter(adapter_repo_id, adapter_name=winning_domain)
+                base_model.load_adapter(adapter_source, adapter_name=winning_domain)
 
             # Switch to the requested adapter directly
             base_model.set_adapter(winning_domain)

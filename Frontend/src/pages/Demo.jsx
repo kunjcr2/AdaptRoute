@@ -510,20 +510,20 @@ const GatingScoreBar = ({ domain, score, isWinner }) => {
     const barWidth = `${Math.round(score * 100)}%`;
 
     return (
-        <div className="flex items-center justify-between text-xs font-medium">
-            <div className="w-16 text-brand-600 flex items-center gap-1">
-                {isWinner && <span className="text-yellow-500">★</span>}
-                <span>{domain}</span>
+        <div className="flex items-center justify-between text-sm font-medium">
+            <div className="w-20 text-brand-700 flex items-center gap-1.5">
+                {isWinner && <span className="text-yellow-500 text-lg">★</span>}
+                <span className="font-semibold capitalize">{domain}</span>
             </div>
-            <div className="flex-1 mx-3 h-5 bg-brand-100 rounded-full overflow-hidden">
+            <div className="flex-1 mx-4 h-8 bg-brand-100 rounded-full overflow-hidden">
                 <div
                     className={`h-full ${barColor} transition-all duration-500 flex items-center justify-center`}
                     style={{ width: barWidth }}
                 >
-                    {score > 0.15 && <span className="text-white text-[10px] font-bold">{(score * 100).toFixed(0)}%</span>}
+                    {score > 0.15 && <span className="text-white text-xs font-bold">{(score * 100).toFixed(0)}%</span>}
                 </div>
             </div>
-            <div className="w-12 text-right text-brand-700 font-semibold">{(score * 100).toFixed(1)}</div>
+            <div className="w-16 text-right text-brand-700 font-semibold">{(score * 100).toFixed(1)}</div>
         </div>
     );
 };
@@ -535,9 +535,9 @@ const GatingBadge = ({ scores, winner }) => {
         <motion.div
             initial={{ opacity: 0, y: -4 }}
             animate={{ opacity: 1, y: 0 }}
-            className="mt-3 p-3 bg-gradient-to-br from-brand-50 to-brand-50/50 border border-brand-100 rounded-xl space-y-2"
+            className="mt-4 p-5 bg-gradient-to-br from-brand-50 to-brand-50/50 border border-brand-100 rounded-xl space-y-4"
         >
-            <div className="text-xs font-semibold text-brand-600 uppercase tracking-wider">Gating Distribution</div>
+            <div className="text-sm font-bold text-brand-700 uppercase tracking-wide">Gating Distribution</div>
             {Object.entries(scores).map(([domain, score]) => (
                 <GatingScoreBar
                     key={domain}
