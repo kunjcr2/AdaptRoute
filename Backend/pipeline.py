@@ -161,6 +161,10 @@ def process_query(query: str) -> dict:
     gating_model = global_systems["gating_model"]
 
     gate_inputs = gating_tokenizer(query, return_tensors="pt", truncation=True, max_length=512).to(gating_model.device)
+    
+    if "token_type_ids" in gate_inputs:
+        del gate_inputs["token_type_ids"]
+
     with torch.no_grad():
         gate_outputs = gating_model(**gate_inputs)
 
