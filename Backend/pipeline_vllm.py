@@ -1,9 +1,10 @@
 # !pip install vllm -q
 
 import os
+import shutil
 import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
-from huggingface_hub import snapshot_download
+from huggingface_hub import snapshot_download, login
 import time
 
 # ==============================================================================
@@ -12,8 +13,9 @@ import time
 # Firewall + Gating stay on HF transformers (they're tiny, already fast).
 # Only the base model generation switches to vLLM for 10x speed gains.
 #
-# Install on Colab:
+# Usage:
 #   pip install vllm
+#   python app.py  (with: import pipeline_vllm as pipeline)
 # ==============================================================================
 
 # Force vLLM to use the stable v0 engine.
@@ -24,6 +26,17 @@ from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
 
 # ==============================================================================
+# HUGGING FACE AUTH — reads HF_TOKEN from environment variable
+# Set it on the SSH server:  export HF_TOKEN="hf_your_token_here"
+# ==============================================================================
+HF_TOKEN = os.environ.get("HF_TOKEN", "")
+if HF_TOKEN:
+    login(token=HF_TOKEN, add_to_git_credential=False)
+    print("✓ HuggingFace login OK")
+else:
+    print("⚠ HF_TOKEN not set — public models only")
+
+# ==============================================================================
 # CONFIGURATION — keep in sync with pipeline.py
 # ==============================================================================
 FIREWALL_MODEL = "protectai/deberta-v3-base-prompt-injection-v2"
@@ -31,10 +44,10 @@ GATING_MODEL   = "kunjcr2/gating-bert-adaptroute"
 BASE_MODEL     = "Qwen/Qwen2.5-1.5B"
 
 ADAPTER_REPOS = {
-    "code":    "kunjcr2/code-adaptroute-v4",
-    "math":    "kunjcr2/math-adaptroute-v4",
-    "qa":      "kunjcr2/qa-adaptroute-v4",
-    "medical": "kunjcr2/medical-adaptroute-v4",
+    "code":    "kunjcr2/code-adaptroute-v3",
+    "math":    "kunjcr2/math-adaptroute-v3",
+    "qa":      "kunjcr2/qa-adaptroute-v3",
+    "medical": "kunjcr2/medical-adaptroute-v3",
 }
 
 # vLLM LoRARequest needs a unique integer ID per adapter name
@@ -68,22 +81,34 @@ SAMPLING_PARAMS = SamplingParams(
 )
 
 # ==============================================================================
-# prepare() — download adapters from HF if not already local
+# prepare() — force re-download adapters from HF for a clean state
 # ==============================================================================
 def prepare():
-    os.makedirs(ADAPTERS_DIR, exist_ok=True)
-    existing = [n for n in os.listdir(ADAPTERS_DIR) if os.path.isdir(os.path.join(ADAPTERS_DIR, n))]
+    """
+    Force re-downloads all adapters from HuggingFace into ADAPTERS_DIR.
+    Deletes the existing Adapters folder first to ensure clean state.
+    """
+    # Always wipe and re-download for a clean state
+    if os.path.exists(ADAPTERS_DIR):
+        print(f"Removing existing Adapters folder: {ADAPTERS_DIR}")
+        shutil.rmtree(ADAPTERS_DIR)
+        print("✓ Deleted")
 
-    if not existing:
-        print(f"Adapters not found. Downloading to {ADAPTERS_DIR}...")
-        for domain, repo_id in ADAPTER_REPOS.items():
-            local_path = os.path.join(ADAPTERS_DIR, domain)
-            print(f"  Downloading {repo_id} → {local_path}")
-            snapshot_download(repo_id=repo_id, local_dir=local_path,
-                              ignore_patterns=["*.msgpack", "*.h5"])
-        print("All adapters downloaded.")
-    else:
-        print(f"Adapters already present in {ADAPTERS_DIR}.")
+    os.makedirs(ADAPTERS_DIR, exist_ok=True)
+    print(f"Downloading all adapters to {ADAPTERS_DIR}...")
+
+    for domain, repo_id in ADAPTER_REPOS.items():
+        local_path = os.path.join(ADAPTERS_DIR, domain)
+        print(f"  Downloading {repo_id} → {local_path} ...")
+        snapshot_download(
+            repo_id=repo_id,
+            local_dir=local_path,
+            ignore_patterns=["*.msgpack", "*.h5"],
+            token=HF_TOKEN if HF_TOKEN else None,
+        )
+        print(f"  ✓ {domain} done")
+
+    print("✓ All adapters downloaded")
 
 # ==============================================================================
 # load_all_models() — Firewall + Gating on HF, base model on vLLM
@@ -161,35 +186,65 @@ def process_query(query: str) -> dict:
 
     probs       = torch.softmax(gate_logits, dim=-1).squeeze()
     best_idx    = probs.argmax().item()
+    best_prob   = probs[best_idx].item()
     id2label    = gate_model.config.id2label
-    winning_label = id2label.get(best_idx, "").lower()
 
-    winning_domain = None
-    for domain in ADAPTER_REPOS:
-        if domain in winning_label:
-            winning_domain = domain
-            break
+    # THRESHOLD CHECK: If confidence is below 0.9, use base model without adapter
+    if best_prob < 0.9:
+        print(f"Gating confidence {best_prob:.4f} below threshold (0.9). Using base model without adapter.")
+        winning_domain = None
+        winning_label = "base_model"
+    else:
+        winning_label = id2label.get(best_idx, "").lower()
+        winning_domain = None
 
-    if not winning_domain:
-        return {"status": "error", "message": f"Gating network returned unknown label: {winning_label}"}
+        for domain in ADAPTER_REPOS:
+            if domain in winning_label:
+                winning_domain = domain
+                break
+
+        print(f"Using adapter: {winning_domain}")
+
+        if not winning_domain:
+            return {"status": "error", "message": f"Gating network returned unknown label: {winning_label}"}
 
     t_gate = time.time()
 
-    # ── 3. vLLM Generation with LoRA ──────────────────────────────────────────
-    local_adapter_path = os.path.join(ADAPTERS_DIR, winning_domain)
-    lora_request = LoRARequest(
-        lora_name   = winning_domain,
-        lora_int_id = ADAPTER_IDS[winning_domain],
-        lora_path = local_adapter_path,
-    )
-
+    # ── 3. vLLM Generation (with or without LoRA) ─────────────────────────────
     formatted_prompt = f"<|im_start|>user\n{query}<|im_end|>\n<|im_start|>assistant\n"
 
-    outputs = global_systems["vllm_engine"].generate(
-        formatted_prompt,
-        SAMPLING_PARAMS,
-        lora_request=lora_request,
+    # Dynamic max_tokens based on domain
+    max_tokens_map = {"medical": 256, "code": 256, "math": 128, "qa": 64}
+    max_new_tokens = max_tokens_map.get(winning_domain, 128) if winning_domain else 128
+
+    sampling = SamplingParams(
+        max_tokens=max_new_tokens,
+        temperature=0.0,
+        repetition_penalty=1.5,
+        stop=["<|im_end|>"],
     )
+
+    if winning_domain is not None:
+        # Generate with LoRA adapter
+        local_adapter_path = os.path.join(ADAPTERS_DIR, winning_domain)
+        adapter_source = local_adapter_path if os.path.exists(local_adapter_path) else ADAPTER_REPOS[winning_domain]
+
+        lora_request = LoRARequest(
+            lora_name   = winning_domain,
+            lora_int_id = ADAPTER_IDS[winning_domain],
+            lora_path   = adapter_source,
+        )
+        outputs = global_systems["vllm_engine"].generate(
+            formatted_prompt,
+            sampling,
+            lora_request=lora_request,
+        )
+    else:
+        # Generate with base model only (no adapter)
+        outputs = global_systems["vllm_engine"].generate(
+            formatted_prompt,
+            sampling,
+        )
 
     response = outputs[0].outputs[0].text.strip()
     generated_tokens = len(outputs[0].outputs[0].token_ids)
@@ -212,7 +267,8 @@ def process_query(query: str) -> dict:
     return {
         "status":            "success",
         "response":          response,
-        "adapter_used":      winning_domain,
+        "adapter_used":      winning_domain if winning_domain else "base_model",
+        "gating_confidence": round(best_prob, 4),
         "gating_scores":     gating_scores,
         "firewall_label":    fw_label,
         "time_seconds":      round(t_total, 2),
