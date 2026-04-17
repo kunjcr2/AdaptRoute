@@ -29,6 +29,7 @@ CORS(app)
 def health():
     return jsonify({"status": "ok", "message": "Pipeline running."})
 
+
 @app.route("/generate", methods=["POST"])
 def generate():
     data = request.get_json(force=True) or {}
@@ -58,6 +59,7 @@ print("=" * 60)
 print(f"POST {public_url}/generate  (body: {{'query': '...'}})")
 print("=" * 60)
 
+# ==============================================================================
 # Keep cell alive
 try:
     while True:
