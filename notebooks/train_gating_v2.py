@@ -48,7 +48,7 @@ from transformers import (
 # 1. Configuration
 # ==============================================================================
 HF_USERNAME   = "kunjcr2"
-HF_REPO_NAME  = "gating-bert-adaptroute"
+HF_REPO_NAME  = "gating-adaptroute"
 
 
 MODEL_CHECKPOINT = "distilbert-base-uncased"
@@ -672,7 +672,7 @@ tags:
 pipeline_tag: text-classification
 ---
 
-# gating-bert-adaptroute (v2 — 5-class)
+# gating-adaptroute (v2 — 5-class)
 
 A 5-class DistilBERT classifier acting as the gating network for AdaptRoute.
 
