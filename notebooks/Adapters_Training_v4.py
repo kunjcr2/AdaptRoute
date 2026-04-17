@@ -123,13 +123,13 @@ ADAPTERS = [
 print("✓ Config ready")
 
 # ── Cell 4: Authentication ─────────────────────────────────────
-HF_TOKEN = "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"
+HF_TOKEN = "h"
 
 login(token=HF_TOKEN, add_to_git_credential=False)
 print("✓ HuggingFace login OK")
 
 if WANDB_PROJECT:
-    wandb.login(key="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")
+    wandb.login(key="s")
     print("✓ W&B ready")
 
 from typing import Optional, Dict, List
