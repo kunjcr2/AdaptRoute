@@ -43,24 +43,32 @@ print(f"Using device: {DEVICE}")
 
 def prepare():
     """
-    Checks if the local Adapters folder has the required weights.
-    If not, downloads them from Hugging Face into their respective subdirectories.
+    Force re-downloads all adapters from HuggingFace into ADAPTERS_DIR.
+    Deletes the existing Adapters folder first to ensure clean state.
     """
+    import shutil
+
+    # Always wipe and re-download for a clean state
+    if os.path.exists(ADAPTERS_DIR):
+        print(f"Removing existing Adapters folder: {ADAPTERS_DIR}")
+        shutil.rmtree(ADAPTERS_DIR)
+        print("✓ Deleted")
+
     os.makedirs(ADAPTERS_DIR, exist_ok=True)
-    # Check if there are subdirectories for the models
-    existing_items = [name for name in os.listdir(ADAPTERS_DIR) if os.path.isdir(os.path.join(ADAPTERS_DIR, name))]
+    print(f"Downloading all adapters to {ADAPTERS_DIR}...")
 
-    if not existing_items:
-        print(f"Adapters folder is empty. Downloading adapters from Hugging Face to {ADAPTERS_DIR}...")
-        for domain, repo_id in ADAPTER_REPOS.items():
-            local_path = os.path.join(ADAPTERS_DIR, domain)
-            print(f"Downloading {repo_id} to {local_path}...")
-            # Ignore some large tracking files or tensorboard logs to keep it fast
-            snapshot_download(repo_id=repo_id, local_dir=local_path, ignore_patterns=["*.msgpack", "*.h5"])
-        print("Finished downloading all adapters.")
-    else:
-        print(f"Adapters already exist locally in {ADAPTERS_DIR}.")
+    for domain, repo_id in ADAPTER_REPOS.items():
+        local_path = os.path.join(ADAPTERS_DIR, domain)
+        print(f"  Downloading {repo_id} → {local_path} ...")
+        snapshot_download(
+            repo_id=repo_id,
+            local_dir=local_path,
+            ignore_patterns=["*.msgpack", "*.h5"],
+            token=HF_TOKEN if HF_TOKEN else None,
+        )
+        print(f"  ✓ {domain} done")
 
+    print("✓ All adapters downloaded")
 # Global dictionary to keep models loaded in RAM
 global_systems = {
     "firewall_model": None,
