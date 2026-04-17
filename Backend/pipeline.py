@@ -1,4 +1,5 @@
 # Yup, this is the newest one
+# run this - https://colab.research.google.com/drive/1ouVcu3Nu2c2BXARJBCSqqrGm4PEso6Fw?usp=sharing
 
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModelForSequenceClassification

@@ -1,7 +1,7 @@
 // src/lib/adaptroute.js
 // Thin client for the AdaptRoute worker. Simple JSON request/response.
 
-const WORKER_URL = import.meta.env.VITE_WORKER_URL || "";
+const WORKER_URL = import.meta.env.VITE_WORKER_URL || "https://swimsuit-threaten-resubmit.ngrok-free.dev";
 
 const defaultHeaders = {
   "Content-Type": "application/json",
