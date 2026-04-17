@@ -5,8 +5,19 @@ import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModelForSequenceClassification
 from peft import PeftModel, PeftConfig
 import os
-from huggingface_hub import snapshot_download
+from huggingface_hub import snapshot_download, login
 import time
+
+# ==============================================================================
+# HUGGING FACE AUTH — reads HF_TOKEN from environment variable
+# Set it on the SSH server:  export HF_TOKEN="hf_your_token_here"
+# ==============================================================================
+HF_TOKEN = os.environ.get("HF_TOKEN", "")
+if HF_TOKEN:
+    login(token=HF_TOKEN, add_to_git_credential=False)
+    print("✓ HuggingFace login OK")
+else:
+    print("⚠ HF_TOKEN not set — public models only")
 
 # ==============================================================================
 # CONFIGURATION
