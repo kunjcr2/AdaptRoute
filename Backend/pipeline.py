@@ -1,5 +1,8 @@
+# Yup, this is the newest one
+# run this - https://colab.research.google.com/drive/1ouVcu3Nu2c2BXARJBCSqqrGm4PEso6Fw?usp=sharing
+
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModelForSequenceClassification, BitsAndBytesConfig
+from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModelForSequenceClassification
 from peft import PeftModel, PeftConfig
 import os
 from huggingface_hub import snapshot_download
@@ -76,12 +79,15 @@ def load_all_models():
     global_systems["gating_model"] = AutoModelForSequenceClassification.from_pretrained(GATING_MODEL).to(DEVICE)
     global_systems["gating_model"].eval()
 
-    # 3. Load Base Model (Native bfloat16 for A100 speed!)
-    print("Loading Base Model natively in bfloat16...")
+    # 3. Load Base Model — use PyTorch built-in SDPA (Flash Attention without any extra install)
+    # attn_implementation="sdpa" uses torch.nn.functional.scaled_dot_product_attention
+    # which hits Flash Attention kernels natively on A100 (PyTorch 2.0+, already on Colab)
+    print("Loading Base Model with SDPA attention (bfloat16)...")
     base_model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
+        attn_implementation="sdpa",
     ).to(DEVICE)
     # CRITICAL FIX for generation speed: use_cache must be True for inference
     base_model.config.use_cache = True
@@ -153,7 +159,7 @@ def process_query(query: str) -> dict:
             winning_domain = domain
             break
 
-    print(f"Using the adapter: {winning_domain}")
+    print(f"Using adapter: {winning_domain}")
 
     if not winning_domain:
         return {"status": "error", "message": f"Could not map gating network output to a known adapter. Got: {winning_label}"}
@@ -180,9 +186,18 @@ def process_query(query: str) -> dict:
 
     t_adapter = time.time()
     # ---------------------------------------------------------
-    # 4. Generation
+    # 4. Generation (BOTH: Base Model Alone vs. Base Model + Adapter)
     # ---------------------------------------------------------
     base_tokenizer = global_systems["base_tokenizer"]
+
+    # Dynamic max_new_tokens based on domain
+    max_tokens_map = {
+        "medical": 256,
+        "code": 128,
+        "math": 128,
+        "qa": 64
+    }
+    max_new_tokens = max_tokens_map.get(winning_domain, 128)
 
     # Standard format wrapper used for QA/Tasks
     formatted_prompt = f"<|im_start|>user\n{query}<|im_end|>\n<|im_start|>assistant\n"
@@ -194,31 +209,49 @@ def process_query(query: str) -> dict:
     if im_end_id is not None and im_end_id != base_tokenizer.unk_token_id:
         stop_tokens.append(im_end_id)
 
-    with torch.no_grad():
+    # Math proofs repeat symbols/terms naturally — loosen the constraint for that domain
+    ngram_size = 5 if winning_domain == "math" else 3
+
+    # Generate response with adapter
+    base_model.set_adapter(winning_domain)
+    base_model.merge_adapter()
+    with torch.inference_mode():
         out = base_model.generate(
             **enc,
-            max_new_tokens=256,
+            max_new_tokens=max_new_tokens,
             do_sample=False,
-            repetition_penalty=1.5,
+            use_cache=True,
+            no_repeat_ngram_size=ngram_size,
             pad_token_id=base_tokenizer.pad_token_id,
-            eos_token_id=stop_tokens
+            eos_token_id=stop_tokens,
         )
+    base_model.unmerge_adapter()
+
+    t_gen = time.time()
 
     response = base_tokenizer.decode(
         out[0][enc["input_ids"].shape[1]:],
         skip_special_tokens=True
     ).strip()
 
-    t_total = t_gen - t_start
+    # For code domain, remove trailing comments
+    if winning_domain == "code":
+        parts = response.split("#")
+        if len(parts) > 1:
+            response = "#".join(parts[:-1]).strip()
+        # Clean up any trailing whitespace/artifacts
+        response = response.rstrip()
+      
+    if winning_domain == "medical" or winning_domain == "math":
+        parts = response.split(".")
+        if len(parts) > 1:
+            response = ".".join(parts[:-1]).strip()
+        parts = response.split("\n")
+        if len(parts) > 1:
+            response = "\n".join(parts[:-1]).strip()
+        response = response.rstrip()
 
-    print("\n--- INFERENCE PROFILING ---")
-    print(f"Firewall Check:    {t_fw - t_start:.2f}s")
-    print(f"Gating Network:    {t_gate - t_fw:.2f}s")
-    print(f"Adapter Switching: {t_adapter - t_gate:.2f}s")
-    generated_tokens = out.shape[1] - enc['input_ids'].shape[1]
-    print(f"Text Generation:   {t_gen - t_adapter:.2f}s ({generated_tokens} tokens, {generated_tokens/(t_gen - t_adapter + 0.0001):.2f} tok/s)")
-    print(f"Total Time:        {t_total:.2f}s")
-    print("---------------------------\n")
+    t_total = t_gen - t_start
 
     gating_scores = {
         gate_id2label.get(i, str(i)).lower(): round(probs[i].item(), 4)
@@ -230,12 +263,6 @@ def process_query(query: str) -> dict:
         "response": response,
         "adapter_used": winning_domain,
         "gating_scores": gating_scores,
-        "time_taken_seconds": round(t_total, 2),
+        "firewall_label": fw_label,
+        "time_seconds": round(t_total, 2),
     }
-
-prepare()
-load_all_models()
-
-test_query = ""
-result = process_query(test_query)
-print(result)

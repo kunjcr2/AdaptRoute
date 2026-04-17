@@ -5,6 +5,7 @@ import Home from './pages/Home';
 import Architecture from './pages/Architecture';
 import Firewall from './pages/Firewall';
 import Evaluation from './pages/Evaluation';
+import Demo from './pages/Demo';
 
 function App() {
   return (
@@ -14,6 +15,7 @@ function App() {
         <Route path="architecture" element={<Architecture />} />
         <Route path="firewall" element={<Firewall />} />
         <Route path="evaluation" element={<Evaluation />} />
+        <Route path="demo" element={<Demo />} />
       </Route>
     </Routes>
   );
