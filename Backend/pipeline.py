@@ -148,41 +148,50 @@ def process_query(query: str) -> dict:
     # Get highest probability domain directly
     probs = torch.softmax(gate_outputs.logits, dim=-1).squeeze()
     best_idx = probs.argmax().item()
+    best_prob = probs[best_idx].item()
     gate_id2label = gating_model.config.id2label
 
-    winning_label = gate_id2label.get(best_idx, "").lower()
-    winning_domain = None
+    # THRESHOLD CHECK: If confidence is below 0.9, use base model without adapter
+    if best_prob < 0.9:
+        print(f"Gating confidence {best_prob:.4f} below threshold (0.9). Using base model without adapter.")
+        winning_domain = None
+        winning_label = "base_model"
+    else:
+        winning_label = gate_id2label.get(best_idx, "").lower()
+        winning_domain = None
 
-    # Identify which local adapter to use based on the winning label
-    for domain in ADAPTER_REPOS.keys():
-        if domain.lower() in winning_label:
-            winning_domain = domain
-            break
+        # Identify which local adapter to use based on the winning label
+        for domain in ADAPTER_REPOS.keys():
+            if domain.lower() in winning_label:
+                winning_domain = domain
+                break
 
-    print(f"Using adapter: {winning_domain}")
+        print(f"Using adapter: {winning_domain}")
 
-    if not winning_domain:
-        return {"status": "error", "message": f"Could not map gating network output to a known adapter. Got: {winning_label}"}
+        if not winning_domain:
+            return {"status": "error", "message": f"Could not map gating network output to a known adapter. Got: {winning_label}"}
 
     t_gate = time.time()
     # ---------------------------------------------------------
-    # 3. Dynamic Adapter Loading (Direct Use)
+    # 3. Dynamic Adapter Loading (Direct Use) - Skip if below threshold
     # ---------------------------------------------------------
     base_model = global_systems["base_model"]
-    local_adapter_path = os.path.join(ADAPTERS_DIR, winning_domain)
+    
+    if winning_domain is not None:
+        # Load adapter only if above threshold
+        local_adapter_path = os.path.join(ADAPTERS_DIR, winning_domain)
 
-    if not isinstance(base_model, PeftModel):
-        # First time loading an adapter
-        base_model = PeftModel.from_pretrained(base_model, local_adapter_path, adapter_name=winning_domain)
-        global_systems["base_model"] = base_model
-    else:
-        # Load if not already present in memory
-        if winning_domain not in base_model.peft_config:
-            base_model.load_adapter(local_adapter_path, adapter_name=winning_domain)
+        if not isinstance(base_model, PeftModel):
+            # First time loading an adapter
+            base_model = PeftModel.from_pretrained(base_model, local_adapter_path, adapter_name=winning_domain)
+            global_systems["base_model"] = base_model
+        else:
+            # Load if not already present in memory
+            if winning_domain not in base_model.peft_config:
+                base_model.load_adapter(local_adapter_path, adapter_name=winning_domain)
 
-        # Switch to the requested adapter directly
-        base_model.set_adapter(winning_domain)
-
+            # Switch to the requested adapter directly
+            base_model.set_adapter(winning_domain)
 
     t_adapter = time.time()
     # ---------------------------------------------------------
@@ -193,11 +202,11 @@ def process_query(query: str) -> dict:
     # Dynamic max_new_tokens based on domain
     max_tokens_map = {
         "medical": 256,
-        "code": 128,
+        "code": 256,
         "math": 128,
         "qa": 64
     }
-    max_new_tokens = max_tokens_map.get(winning_domain, 128)
+    max_new_tokens = max_tokens_map.get(winning_domain, 128) if winning_domain else 128
 
     # Standard format wrapper used for QA/Tasks
     formatted_prompt = f"<|im_start|>user\n{query}<|im_end|>\n<|im_start|>assistant\n"
@@ -212,9 +221,11 @@ def process_query(query: str) -> dict:
     # Math proofs repeat symbols/terms naturally — loosen the constraint for that domain
     ngram_size = 5 if winning_domain == "math" else 3
 
-    # Generate response with adapter
-    base_model.set_adapter(winning_domain)
-    base_model.merge_adapter()
+    # Generate response with adapter if available, otherwise base model only
+    if winning_domain is not None:
+        base_model.set_adapter(winning_domain)
+        base_model.merge_adapter()
+    
     with torch.inference_mode():
         out = base_model.generate(
             **enc,
@@ -225,7 +236,9 @@ def process_query(query: str) -> dict:
             pad_token_id=base_tokenizer.pad_token_id,
             eos_token_id=stop_tokens,
         )
-    base_model.unmerge_adapter()
+    
+    if winning_domain is not None:
+        base_model.unmerge_adapter()
 
     t_gen = time.time()
 
@@ -261,7 +274,8 @@ def process_query(query: str) -> dict:
     return {
         "status": "success",
         "response": response,
-        "adapter_used": winning_domain,
+        "adapter_used": winning_domain if winning_domain else "base_model",
+        "gating_confidence": round(best_prob, 4),
         "gating_scores": gating_scores,
         "firewall_label": fw_label,
         "time_seconds": round(t_total, 2),
