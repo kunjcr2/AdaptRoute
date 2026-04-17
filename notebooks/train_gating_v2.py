@@ -124,7 +124,7 @@ def load_json_file(path: Path) -> tuple:
 
 def build_general_class(target_n: int) -> List[str]:
     """
-    Build a synthetic 'general' class from diverse HuggingFace datasets.
+    Build a synthetic 'general' class with exactly target_n samples from HuggingFace datasets.
     These are everyday questions that DON'T belong to code/math/qa/medical.
     """
     print(f"\n  Building 'general' class ({target_n:,} samples) ...")
@@ -135,234 +135,248 @@ def build_general_class(target_n: int) -> List[str]:
     try:
         alpaca = load_dataset("tatsu-lab/alpaca", split="train", trust_remote_code=True)
         for rec in alpaca:
+            if len(general_texts) >= target_n:
+                break
             instruction = (rec.get("instruction") or "").strip()
             _input = (rec.get("input") or "").strip()
             text = f"{instruction} {_input}".strip() if _input else instruction
             if text and len(text) > 20:
                 general_texts.append(text)
-            if len(general_texts) >= target_n * 2:
-                break
         print(f"    ✓ Got {len(general_texts):,} from alpaca")
     except Exception as e:
         print(f"    ⚠ alpaca failed: {e}")
 
     # Source 2: SQuAD (Stanford QA) — general knowledge questions
-    print("    ↓ Loading SQuAD ...")
-    try:
-        squad = load_dataset("squad", split="train", trust_remote_code=True)
-        for rec in squad:
-            question = (rec.get("question") or "").strip()
-            if question and len(question) > 10 and len(general_texts) < target_n * 3:
-                general_texts.append(question)
-        print(f"    ✓ Got {len(general_texts):,} total after SQuAD")
-    except Exception as e:
-        print(f"    ⚠ SQuAD failed: {e}")
+    if len(general_texts) < target_n:
+        print("    ↓ Loading SQuAD ...")
+        try:
+            squad = load_dataset("squad", split="train", trust_remote_code=True)
+            for rec in squad:
+                if len(general_texts) >= target_n:
+                    break
+                question = (rec.get("question") or "").strip()
+                if question and len(question) > 10:
+                    general_texts.append(question)
+            print(f"    ✓ Got {len(general_texts):,} total after SQuAD")
+        except Exception as e:
+            print(f"    ⚠ SQuAD failed: {e}")
 
     # Source 3: WikiQA — Wikipedia Q&A pairs
-    print("    ↓ Loading wikiqa ...")
-    try:
-        wikiqa = load_dataset("wikiqa", split="train", trust_remote_code=True)
-        for rec in wikiqa:
-            question = (rec.get("question") or "").strip()
-            if question and len(question) > 10 and len(general_texts) < target_n * 4:
-                general_texts.append(question)
-        print(f"    ✓ Got {len(general_texts):,} total after wikiqa")
-    except Exception as e:
-        print(f"    ⚠ wikiqa failed: {e}")
+    if len(general_texts) < target_n:
+        print("    ↓ Loading wikiqa ...")
+        try:
+            wikiqa = load_dataset("wikiqa", split="train", trust_remote_code=True)
+            for rec in wikiqa:
+                if len(general_texts) >= target_n:
+                    break
+                question = (rec.get("question") or "").strip()
+                if question and len(question) > 10:
+                    general_texts.append(question)
+            print(f"    ✓ Got {len(general_texts):,} total after wikiqa")
+        except Exception as e:
+            print(f"    ⚠ wikiqa failed: {e}")
 
     # Source 4: Natural Questions — Google's natural Q&A dataset
-    print("    ↓ Loading natural_questions ...")
-    try:
-        nq = load_dataset("natural_questions", split="train", trust_remote_code=True)
-        for i, rec in enumerate(nq):
-            if i >= 5000:  # Limit to avoid huge download
-                break
-            question = (rec.get("question") or "").strip()
-            if question and len(question) > 10 and len(general_texts) < target_n * 5:
-                general_texts.append(question)
-        print(f"    ✓ Got {len(general_texts):,} total after natural_questions")
-    except Exception as e:
-        print(f"    ⚠ natural_questions failed: {e}")
+    if len(general_texts) < target_n:
+        print("    ↓ Loading natural_questions ...")
+        try:
+            nq = load_dataset("natural_questions", split="train", trust_remote_code=True)
+            for i, rec in enumerate(nq):
+                if len(general_texts) >= target_n:
+                    break
+                question = (rec.get("question") or "").strip()
+                if question and len(question) > 10:
+                    general_texts.append(question)
+            print(f"    ✓ Got {len(general_texts):,} total after natural_questions")
+        except Exception as e:
+            print(f"    ⚠ natural_questions failed: {e}")
 
     # Source 5: CoQA (Conversational QA) — conversational questions
-    print("    ↓ Loading coqa ...")
-    try:
-        coqa = load_dataset("coqa", split="train", trust_remote_code=True)
-        for rec in coqa:
-            questions = rec.get("questions", [])
-            for q_obj in questions:
-                question = (q_obj.get("input_text") or "").strip()
-                if question and len(question) > 10 and len(general_texts) < target_n * 6:
-                    general_texts.append(question)
-        print(f"    ✓ Got {len(general_texts):,} total after coqa")
-    except Exception as e:
-        print(f"    ⚠ coqa failed: {e}")
+    if len(general_texts) < target_n:
+        print("    ↓ Loading coqa ...")
+        try:
+            coqa = load_dataset("coqa", split="train", trust_remote_code=True)
+            for rec in coqa:
+                if len(general_texts) >= target_n:
+                    break
+                questions = rec.get("questions", [])
+                for q_obj in questions:
+                    if len(general_texts) >= target_n:
+                        break
+                    question = (q_obj.get("input_text") or "").strip()
+                    if question and len(question) > 10:
+                        general_texts.append(question)
+            print(f"    ✓ Got {len(general_texts):,} total after coqa")
+        except Exception as e:
+            print(f"    ⚠ coqa failed: {e}")
 
-    # Source 6: Hand-crafted general queries that historically get misrouted
-    handcrafted = [
-        # Everyday / how-to
-        "How do I open a tight jar?",
-        "What's the best way to remove a stain from a shirt?",
-        "How do I change a car tire?",
-        "What's the proper way to fold a fitted sheet?",
-        "How do I unclog a drain?",
-        "What's the best way to organize a closet?",
-        "How do I get rid of ants in my kitchen?",
-        "What's the easiest way to clean a microwave?",
-        "How long should I cook pasta for?",
-        "What temperature should I set my oven to for baking cookies?",
-        "How do I tie a necktie?",
-        "What's the best way to sharpen a knife?",
-        "How do I parallel park?",
-        "How do I iron a dress shirt properly?",
-        "What's a good recipe for chocolate chip cookies?",
-        "How do I boil an egg perfectly?",
-        "How do I make pancakes from scratch?",
-        "What's the best way to store vegetables?",
-        "How do I fix a leaky faucet?",
-        "What's the proper technique for doing push-ups?",
-        # Tech / history (non-code, non-medical)
-        "What is the history of the internet?",
-        "Who invented the telephone?",
-        "Explain how a refrigerator works.",
-        "What is blockchain technology?",
-        "How does GPS work?",
-        "What is the history of video games?",
-        "How does Wi-Fi work?",
-        "What was the first computer?",
-        "Explain the history of social media.",
-        "How do electric cars work?",
-        "What is artificial intelligence?",
-        "How does a microwave oven work?",
-        "What is the history of space exploration?",
-        "How does 3D printing work?",
-        "What is cryptocurrency?",
-        "How do rockets work?",
-        "What is the cloud and how does it work?",
-        "How does a helicopter stay in the air?",
-        "What is nuclear energy?",
-        "How do solar cells convert sunlight to electricity?",
-        # General knowledge (not QA-style factual)
-        "Tell me something interesting about dolphins.",
-        "What makes a good leader?",
-        "How can I improve my public speaking skills?",
-        "What are some tips for better sleep?",
-        "How do I start learning to play guitar?",
-        "What's the difference between a crocodile and an alligator?",
-        "How does photography work?",
-        "What are some fun activities to do on a rainy day?",
-        "How do I write a good resume?",
-        "What are some strategies for saving money?",
-        "How do I train a puppy?",
-        "What's the best way to learn a new language?",
-        "How do I start a garden?",
-        "What are some good books for beginners in philosophy?",
-        "How do solar panels work?",
-        "What's the difference between weather and climate?",
-        "How can I improve my memory?",
-        "What are some tips for reducing stress?",
-        "How do I plan a budget for a vacation?",
-        "What makes a good presentation?",
-        "What's the best way to make coffee?",
-        "How do I choose a good wine?",
-        "What are the benefits of meditation?",
-        "How do I organize my time better?",
-        "What's a good exercise routine for beginners?",
-        # Ambiguous queries that the old model misclassified
-        "Can you explain how transformers work in NLP?",
-        "Explain the historical significance of the Magna Carta.",
-        "What is the tallest mountain in the solar system?",
-        "What is the chemical symbol for gold?",
-        "Which planet has the most moons?",
-        "What are the most popular programming paradigms?",
-        "Tell me about the Renaissance period.",
-        "What are the different types of clouds?",
-        "How do airplanes fly?",
-        "What causes earthquakes?",
-        "How is paper made?",
-        "What is the theory of evolution?",
-        "How do magnets work?",
-        "What causes the Northern Lights?",
-        "How do submarines work?",
-        # Geography / nature
-        "Which is the largest ocean on Earth?",
-        "What is the deepest ocean trench?",
-        "How many continents are there?",
-        "What causes a tornado?",
-        "How do coral reefs form?",
-        "What is photosynthesis?",
-        "How do birds migrate?",
-        "What is biodiversity?",
-        "How do volcanoes form?",
-        "What causes tsunamis?",
-        # History
-        "When was the Roman Empire at its peak?",
-        "Who was Julius Caesar?",
-        "What started World War I?",
-        "Who invented the printing press?",
-        "What is the Silk Road?",
-        "When did the Industrial Revolution begin?",
-        "Who was Cleopatra?",
-        "When did the Berlin Wall fall?",
-        "What was the Black Death?",
-        "Who were the Vikings?",
-        # Arts & culture
-        "Who painted the Mona Lisa?",
-        "What is Shakespeare famous for?",
-        "Who composed Beethoven's symphonies?",
-        "What is the Louvre?",
-        "Who was Michelangelo?",
-        "What is opera?",
-        "Who wrote Don Quixote?",
-        "What is the purpose of art?",
-        "Who invented ballet?",
-        "What are the major art movements?",
-        # Social / lifestyle
-        "What are the benefits of reading?",
-        "How do I build healthy habits?",
-        "What makes a good friendship?",
-        "How can I be more confident?",
-        "What is work-life balance?",
-        "How do I deal with anxiety?",
-        "What is networking?",
-        "How do I find my passion?",
-        "What are soft skills?",
-        "How do I become a better listener?",
-        # Environment & sustainability
-        "What is climate change?",
-        "How can I reduce my carbon footprint?",
-        "What is renewable energy?",
-        "How does recycling help the environment?",
-        "What is deforestation?",
-        "How do I live sustainably?",
-        "What is plastic pollution?",
-        "How does pollution affect animals?",
-        "What is the ozone layer?",
-        "Why are bees important?",
-        # Sports & fitness
-        "What are the benefits of yoga?",
-        "How do I train for a marathon?",
-        "What is CrossFit?",
-        "How do I improve my flexibility?",
-        "What is the best time to exercise?",
-        "How do I prevent sports injuries?",
-        "What is a healthy diet?",
-        "How do I build muscle mass?",
-        "What is the difference between aerobic and anaerobic exercise?",
-        "How do I stay motivated for fitness?",
-    ]
-    general_texts.extend(handcrafted)
-    print(f"    ✓ Added {len(handcrafted)} handcrafted samples")
+    # Source 6: Hand-crafted queries to fill remaining gap
+    if len(general_texts) < target_n:
+        print(f"    ↓ Filling gap with handcrafted queries (need {target_n - len(general_texts):,} more)...")
+        handcrafted = [
+            # Everyday / how-to
+            "How do I open a tight jar?",
+            "What's the best way to remove a stain from a shirt?",
+            "How do I change a car tire?",
+            "What's the proper way to fold a fitted sheet?",
+            "How do I unclog a drain?",
+            "What's the best way to organize a closet?",
+            "How do I get rid of ants in my kitchen?",
+            "What's the easiest way to clean a microwave?",
+            "How long should I cook pasta for?",
+            "What temperature should I set my oven to for baking cookies?",
+            "How do I tie a necktie?",
+            "What's the best way to sharpen a knife?",
+            "How do I parallel park?",
+            "How do I iron a dress shirt properly?",
+            "What's a good recipe for chocolate chip cookies?",
+            "How do I boil an egg perfectly?",
+            "How do I make pancakes from scratch?",
+            "What's the best way to store vegetables?",
+            "How do I fix a leaky faucet?",
+            "What's the proper technique for doing push-ups?",
+            # Tech / history (non-code, non-medical)
+            "What is the history of the internet?",
+            "Who invented the telephone?",
+            "Explain how a refrigerator works.",
+            "What is blockchain technology?",
+            "How does GPS work?",
+            "What is the history of video games?",
+            "How does Wi-Fi work?",
+            "What was the first computer?",
+            "Explain the history of social media.",
+            "How do electric cars work?",
+            "What is artificial intelligence?",
+            "How does a microwave oven work?",
+            "What is the history of space exploration?",
+            "How does 3D printing work?",
+            "What is cryptocurrency?",
+            "How do rockets work?",
+            "What is the cloud and how does it work?",
+            "How does a helicopter stay in the air?",
+            "What is nuclear energy?",
+            "How do solar cells convert sunlight to electricity?",
+            # General knowledge (not QA-style factual)
+            "Tell me something interesting about dolphins.",
+            "What makes a good leader?",
+            "How can I improve my public speaking skills?",
+            "What are some tips for better sleep?",
+            "How do I start learning to play guitar?",
+            "What's the difference between a crocodile and an alligator?",
+            "How does photography work?",
+            "What are some fun activities to do on a rainy day?",
+            "How do I write a good resume?",
+            "What are some strategies for saving money?",
+            "How do I train a puppy?",
+            "What's the best way to learn a new language?",
+            "How do I start a garden?",
+            "What are some good books for beginners in philosophy?",
+            "How do solar panels work?",
+            "What's the difference between weather and climate?",
+            "How can I improve my memory?",
+            "What are some tips for reducing stress?",
+            "How do I plan a budget for a vacation?",
+            "What makes a good presentation?",
+            "What's the best way to make coffee?",
+            "How do I choose a good wine?",
+            "What are the benefits of meditation?",
+            "How do I organize my time better?",
+            "What's a good exercise routine for beginners?",
+            # Ambiguous queries that the old model misclassified
+            "Can you explain how transformers work in NLP?",
+            "Explain the historical significance of the Magna Carta.",
+            "What is the tallest mountain in the solar system?",
+            "What is the chemical symbol for gold?",
+            "Which planet has the most moons?",
+            "What are the most popular programming paradigms?",
+            "Tell me about the Renaissance period.",
+            "What are the different types of clouds?",
+            "How do airplanes fly?",
+            "What causes earthquakes?",
+            "How is paper made?",
+            "What is the theory of evolution?",
+            "How do magnets work?",
+            "What causes the Northern Lights?",
+            "How do submarines work?",
+            # Geography / nature
+            "Which is the largest ocean on Earth?",
+            "What is the deepest ocean trench?",
+            "How many continents are there?",
+            "What causes a tornado?",
+            "How do coral reefs form?",
+            "What is photosynthesis?",
+            "How do birds migrate?",
+            "What is biodiversity?",
+            "How do volcanoes form?",
+            "What causes tsunamis?",
+            # History
+            "When was the Roman Empire at its peak?",
+            "Who was Julius Caesar?",
+            "What started World War I?",
+            "Who invented the printing press?",
+            "What is the Silk Road?",
+            "When did the Industrial Revolution begin?",
+            "Who was Cleopatra?",
+            "When did the Berlin Wall fall?",
+            "What was the Black Death?",
+            "Who were the Vikings?",
+            # Arts & culture
+            "Who painted the Mona Lisa?",
+            "What is Shakespeare famous for?",
+            "Who composed Beethoven's symphonies?",
+            "What is the Louvre?",
+            "Who was Michelangelo?",
+            "What is opera?",
+            "Who wrote Don Quixote?",
+            "What is the purpose of art?",
+            "Who invented ballet?",
+            "What are the major art movements?",
+            # Social / lifestyle
+            "What are the benefits of reading?",
+            "How do I build healthy habits?",
+            "What makes a good friendship?",
+            "How can I be more confident?",
+            "What is work-life balance?",
+            "How do I deal with anxiety?",
+            "What is networking?",
+            "How do I find my passion?",
+            "What are soft skills?",
+            "How do I become a better listener?",
+            # Environment & sustainability
+            "What is climate change?",
+            "How can I reduce my carbon footprint?",
+            "What is renewable energy?",
+            "How does recycling help the environment?",
+            "What is deforestation?",
+            "How do I live sustainably?",
+            "What is plastic pollution?",
+            "How does pollution affect animals?",
+            "What is the ozone layer?",
+            "Why are bees important?",
+            # Sports & fitness
+            "What are the benefits of yoga?",
+            "How do I train for a marathon?",
+            "What is CrossFit?",
+            "How do I improve my flexibility?",
+            "What is the best time to exercise?",
+            "How do I prevent sports injuries?",
+            "What is a healthy diet?",
+            "How do I build muscle mass?",
+            "What is the difference between aerobic and anaerobic exercise?",
+            "How do I stay motivated for fitness?",
+        ]
+        # Only add as many handcrafted as needed to reach target
+        needed = target_n - len(general_texts)
+        general_texts.extend(handcrafted[:needed])
+        print(f"    ✓ Added {min(len(handcrafted), needed)} handcrafted samples")
 
     # Deduplicate and shuffle
     general_texts = list(set(general_texts))
     random.shuffle(general_texts)
 
-    # Trim to target
-    if len(general_texts) > target_n:
-        general_texts = general_texts[:target_n]
-    print(f"    ✓ Final: {len(general_texts):,} general samples")
-
+    # Trim to exact target
+    general_texts = general_texts[:target_n]
+    print(f"    ✓ Final: {len(general_texts):,} general samples (exactly matching target)")
     return general_texts
 
 
