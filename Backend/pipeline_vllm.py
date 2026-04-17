@@ -1,8 +1,8 @@
 # !pip install vllm -q
 
+import os
 import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
-import os
 from huggingface_hub import snapshot_download
 import time
 
@@ -18,7 +18,6 @@ import time
 
 # Force vLLM to use the stable v0 engine.
 # The v1 engine (default in vLLM 0.7+) has known LoRA bugs with per-request switching.
-import os
 os.environ["VLLM_USE_V1"] = "0"
 
 from vllm import LLM, SamplingParams
@@ -32,10 +31,10 @@ GATING_MODEL   = "kunjcr2/gating-bert-adaptroute"
 BASE_MODEL     = "Qwen/Qwen2.5-1.5B"
 
 ADAPTER_REPOS = {
-    "code":    "kunjcr2/code-adaptroute-v3",
-    "math":    "kunjcr2/math-adaptroute-v3",
-    "qa":      "kunjcr2/qa-adaptroute-v3",
-    "medical": "kunjcr2/medical-adaptroute-v3",
+    "code":    "kunjcr2/code-adaptroute-v4",
+    "math":    "kunjcr2/math-adaptroute-v4",
+    "qa":      "kunjcr2/qa-adaptroute-v4",
+    "medical": "kunjcr2/medical-adaptroute-v4",
 }
 
 # vLLM LoRARequest needs a unique integer ID per adapter name
@@ -109,7 +108,7 @@ def load_all_models():
     global_systems["vllm_engine"] = LLM(
         model=BASE_MODEL,
         enable_lora=True,
-        max_lora_rank=16,
+        max_lora_rank=64,         # v4 adapters use r=32 and r=64
         max_loras=4,              # pre-allocate slots for all 4 domain adapters
         max_cpu_loras=4,          # keep all adapters cached in CPU RAM between requests
         dtype="bfloat16",
@@ -215,26 +214,13 @@ def process_query(query: str) -> dict:
         "response":          response,
         "adapter_used":      winning_domain,
         "gating_scores":     gating_scores,
-        "time_taken_seconds": round(t_total, 2),
+        "firewall_label":    fw_label,
+        "time_seconds":      round(t_total, 2),
     }
 
-prepare()
-load_all_models()
-
-process_query("Write a function to convert a list into a dictionary with index as keys and values as values")
-
-from vllm import LLM, SamplingParams
-
-llm = LLM(
-    model="Qwen/Qwen2.5-1.5B",
-    dtype="bfloat16",
-    trust_remote_code=True,
-    enforce_eager=True,
-    enable_lora=True,
-    max_lora_rank=16,
-    max_loras=4,
-    gpu_memory_utilization=0.90,
-    max_model_len=2048,
-)
-out = llm.generate("Write hello world in Python", SamplingParams(max_tokens=50))
-print(out[0].outputs[0].text)
+# When run directly, execute a quick test
+if __name__ == "__main__":
+    prepare()
+    load_all_models()
+    result = process_query("Write a function to convert a list into a dictionary with index as keys and values as values")
+    print(result)
