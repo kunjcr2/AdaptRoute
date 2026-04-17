@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-    Send, StopCircle, Plus, Trash2, MessageSquare, Copy, RefreshCw,
+    Send, Plus, Trash2, MessageSquare, Copy, RefreshCw,
     Loader2, Cpu, ShieldAlert, AlertTriangle, User, Sparkles, Check,
 } from 'lucide-react';
-import { streamChat, checkHealth, getWorkerUrl } from '../lib/adaptroute';
+import { sendQuery, checkHealth, getWorkerUrl } from '../lib/adaptroute';
 
 const STORAGE_KEY = 'adaptroute-chats-v1';
 
@@ -45,10 +45,9 @@ const Demo = () => {
     const [chats, setChats] = useState([]);
     const [activeId, setActiveId] = useState(null);
     const [input, setInput] = useState('');
-    const [streaming, setStreaming] = useState(false);
+    const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
     const [workerStatus, setWorkerStatus] = useState('checking');
-    const abortRef = useRef(null);
     const messagesEndRef = useRef(null);
 
     // Load chats + health check on mount
@@ -122,14 +121,14 @@ const Demo = () => {
         setChats((prev) => prev.map((c) => (c.id === activeId ? updater(c) : c)));
     }, [activeId]);
 
-    // ── Send / stream ──
-    const runStream = useCallback(async (historyMessages) => {
+    // ── Send query ──
+    const runQuery = useCallback(async (query) => {
         if (workerStatus !== 'online') {
             setError('Worker is not reachable. Start the Colab cell and check VITE_WORKER_URL.');
             return;
         }
         setError(null);
-        setStreaming(true);
+        setLoading(true);
 
         // Insert a placeholder assistant message
         const placeholder = {
@@ -138,85 +137,57 @@ const Demo = () => {
             adapter: null,
             gatingScores: null,
             firewallLabel: null,
-            streaming: true,
-            seconds: null,
+            blocked: false,
         };
         updateActiveChat((c) => ({ ...c, messages: [...c.messages, placeholder] }));
 
-        const controller = new AbortController();
-        abortRef.current = controller;
-
         try {
-            await streamChat({
-                messages: historyMessages.map(({ role, content }) => ({ role, content })),
-                signal: controller.signal,
-                onEvent: (event) => {
-                    updateActiveChat((c) => {
-                        const msgs = [...c.messages];
-                        const last = msgs[msgs.length - 1];
-                        if (!last || last.role !== 'assistant') return c;
+            const result = await sendQuery(query);
 
-                        if (event.type === 'meta') {
-                            msgs[msgs.length - 1] = {
-                                ...last,
-                                adapter: event.adapter_used,
-                                gatingScores: event.gating_scores,
-                                firewallLabel: event.firewall_label,
-                            };
-                        } else if (event.type === 'token') {
-                            msgs[msgs.length - 1] = { ...last, content: last.content + event.text };
-                        } else if (event.type === 'done') {
-                            msgs[msgs.length - 1] = { ...last, streaming: false, seconds: event.seconds };
-                        } else if (event.type === 'blocked') {
-                            msgs[msgs.length - 1] = {
-                                ...last,
-                                streaming: false,
-                                blocked: true,
-                                content: event.message || 'Query blocked by firewall.',
-                                firewallLabel: event.firewall_label,
-                            };
-                        } else if (event.type === 'error') {
-                            msgs[msgs.length - 1] = {
-                                ...last,
-                                streaming: false,
-                                error: true,
-                                content: event.message || 'Worker error.',
-                            };
-                        }
-                        return { ...c, messages: msgs };
-                    });
-                },
+            updateActiveChat((c) => {
+                const msgs = [...c.messages];
+                const last = msgs[msgs.length - 1];
+                if (!last || last.role !== 'assistant') return c;
+
+                if (result.status === 'blocked') {
+                    msgs[msgs.length - 1] = {
+                        ...last,
+                        blocked: true,
+                        content: result.message || 'Query blocked by firewall.',
+                        firewallLabel: result.firewall_label,
+                    };
+                } else if (result.status === 'success') {
+                    msgs[msgs.length - 1] = {
+                        ...last,
+                        content: result.response,
+                        adapter: result.adapter_used,
+                        gatingScores: result.gating_scores,
+                        firewallLabel: result.firewall_label,
+                        seconds: result.time_seconds,
+                    };
+                } else {
+                    msgs[msgs.length - 1] = {
+                        ...last,
+                        error: true,
+                        content: result.message || 'Worker error.',
+                    };
+                }
+                return { ...c, messages: msgs };
             });
         } catch (e) {
-            if (e.name === 'AbortError') {
-                updateActiveChat((c) => {
-                    const msgs = [...c.messages];
-                    const last = msgs[msgs.length - 1];
-                    if (last && last.role === 'assistant') {
-                        msgs[msgs.length - 1] = {
-                            ...last,
-                            streaming: false,
-                            content: last.content + '\n\n[stopped]',
-                        };
-                    }
-                    return { ...c, messages: msgs };
-                });
-            } else {
-                setError(e.message || String(e));
-                updateActiveChat((c) => ({
-                    ...c,
-                    messages: c.messages.slice(0, -1), // drop placeholder on failure
-                }));
-            }
+            setError(e.message || String(e));
+            updateActiveChat((c) => ({
+                ...c,
+                messages: c.messages.slice(0, -1), // drop placeholder on failure
+            }));
         } finally {
-            setStreaming(false);
-            abortRef.current = null;
+            setLoading(false);
         }
     }, [updateActiveChat, workerStatus]);
 
     const sendMessage = async () => {
         const text = input.trim();
-        if (!text || streaming || !activeChat) return;
+        if (!text || loading || !activeChat) return;
 
         const userMsg = { role: 'user', content: text };
         const isFirst = activeChat.messages.length === 0;
@@ -227,24 +198,24 @@ const Demo = () => {
         }));
         setInput('');
 
-        const history = [...activeChat.messages, userMsg];
-        await runStream(history);
+        await runQuery(text);
     };
 
     const regenerate = async () => {
-        if (!activeChat || streaming) return;
-        // Drop the last assistant message, then rerun on history up to the last user message
+        if (!activeChat || loading) return;
+        // Drop the last assistant message, then rerun on the last user message
         const msgs = [...activeChat.messages];
         while (msgs.length > 0 && msgs[msgs.length - 1].role === 'assistant') {
             msgs.pop();
         }
         if (msgs.length === 0) return;
-        updateActiveChat((c) => ({ ...c, messages: msgs }));
-        await runStream(msgs);
-    };
 
-    const stop = () => {
-        abortRef.current?.abort();
+        // Get the last user message
+        const lastUserMsg = msgs[msgs.length - 1];
+        if (lastUserMsg?.role !== 'user') return;
+
+        updateActiveChat((c) => ({ ...c, messages: msgs }));
+        await runQuery(lastUserMsg.content);
     };
 
     const onKeyDown = (e) => {
@@ -254,7 +225,7 @@ const Demo = () => {
         }
     };
 
-    const canRegenerate = activeChat?.messages.some((m) => m.role === 'assistant') && !streaming;
+    const canRegenerate = activeChat?.messages.some((m) => m.role === 'assistant') && !loading;
 
     // ── Render ──
     return (
@@ -283,7 +254,7 @@ const Demo = () => {
                 </div>
                 <div className="p-4 border-t border-brand-100 text-xs text-brand-500 flex items-center gap-2">
                     <span className={`w-2 h-2 rounded-full ${workerStatus === 'online' ? 'bg-green-500 animate-pulse' :
-                            workerStatus === 'offline' ? 'bg-red-500' : 'bg-yellow-500 animate-pulse'
+                        workerStatus === 'offline' ? 'bg-red-500' : 'bg-yellow-500 animate-pulse'
                         }`} />
                     Worker {workerStatus}
                 </div>
@@ -339,28 +310,18 @@ const Demo = () => {
                                 onKeyDown={onKeyDown}
                                 placeholder="Ask AdaptRoute anything…"
                                 rows={1}
-                                disabled={streaming || workerStatus !== 'online'}
+                                disabled={loading}
                                 className="flex-1 bg-transparent outline-none resize-none text-sm text-brand-900 placeholder-brand-400 max-h-40 disabled:opacity-60"
                                 style={{ minHeight: '24px' }}
                             />
-                            {streaming ? (
-                                <button
-                                    onClick={stop}
-                                    className="flex items-center justify-center w-9 h-9 rounded-full bg-red-500 text-white hover:bg-red-600 transition"
-                                    title="Stop"
-                                >
-                                    <StopCircle className="w-4 h-4" />
-                                </button>
-                            ) : (
-                                <button
-                                    onClick={sendMessage}
-                                    disabled={!input.trim() || workerStatus !== 'online'}
-                                    className="flex items-center justify-center w-9 h-9 rounded-full bg-brand-900 text-white hover:bg-brand-800 transition disabled:opacity-40 disabled:cursor-not-allowed"
-                                    title="Send (Enter)"
-                                >
-                                    <Send className="w-4 h-4" />
-                                </button>
-                            )}
+                            <button
+                                onClick={sendMessage}
+                                disabled={!input.trim() || workerStatus !== 'online' || loading}
+                                className="flex items-center justify-center w-9 h-9 rounded-full bg-brand-900 text-white hover:bg-brand-800 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                                title="Send (Enter)"
+                            >
+                                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                            </button>
                         </div>
                         <div className="text-xs text-brand-400 mt-2 text-center">
                             Enter to send · Shift+Enter for newline
@@ -406,7 +367,7 @@ const EmptyState = ({ onPick }) => {
             </div>
             <h2 className="font-serif text-3xl font-bold text-brand-900 mb-3">How can I help today?</h2>
             <p className="text-brand-600 mb-8">Watch the gating network pick the right expert in real time.</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl mx-auto">
+            {/* <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl mx-auto">
                 {examples.map((ex) => (
                     <button
                         key={ex.label}
@@ -419,7 +380,7 @@ const EmptyState = ({ onPick }) => {
                         <div className="text-sm text-brand-800">{ex.text}</div>
                     </button>
                 ))}
-            </div>
+            </div> */}
         </div>
     );
 };
@@ -448,9 +409,9 @@ const Message = ({ message }) => {
                 </div>
             )}
             <div className={`max-w-[75%] ${isUser ? 'order-1' : ''}`}>
-                {/* Adapter badge */}
-                {!isUser && message.adapter && (
-                    <div className="flex items-center gap-2 mb-2">
+                {/* Adapter + gating scores */}
+                {!isUser && !message.blocked && message.adapter && (
+                    <div className="mb-3 space-y-2">
                         <AdapterBadge domain={message.adapter} />
                         {message.gatingScores && (
                             <GatingBadge scores={message.gatingScores} winner={message.adapter} />
@@ -458,30 +419,37 @@ const Message = ({ message }) => {
                     </div>
                 )}
 
+                {/* Blocked indicator */}
+                {message.blocked && (
+                    <div className="mb-3">
+                        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-red-100 border border-red-300">
+                            <ShieldAlert className="w-4 h-4 text-red-600" />
+                            <span className="text-xs font-semibold text-red-700">Blocked by Firewall</span>
+                        </div>
+                    </div>
+                )}
+
                 {/* Bubble */}
                 <div
                     className={`rounded-2xl px-5 py-3 text-sm leading-relaxed whitespace-pre-wrap ${isUser
-                            ? 'bg-brand-900 text-white'
-                            : message.blocked
-                                ? 'bg-red-50 border border-red-200 text-red-900'
-                                : message.error
-                                    ? 'bg-yellow-50 border border-yellow-200 text-yellow-900'
-                                    : 'bg-white border border-brand-100 text-brand-900 shadow-sm'
+                        ? 'bg-brand-900 text-white'
+                        : message.blocked
+                            ? 'bg-red-50 border border-red-200 text-red-900'
+                            : message.error
+                                ? 'bg-yellow-50 border border-yellow-200 text-yellow-900'
+                                : 'bg-white border border-brand-100 text-brand-900 shadow-sm'
                         }`}
                 >
                     {message.blocked && <ShieldAlert className="w-4 h-4 inline mr-2 -mt-0.5" />}
-                    {message.content || (message.streaming && (
+                    {message.content || (
                         <span className="inline-flex items-center gap-2 text-brand-400">
-                            <Loader2 className="w-3 h-3 animate-spin" /> thinking…
+                            <Loader2 className="w-3 h-3 animate-spin" /> generating…
                         </span>
-                    ))}
-                    {message.streaming && message.content && (
-                        <span className="inline-block w-1.5 h-4 bg-brand-500 ml-0.5 animate-pulse align-middle" />
                     )}
                 </div>
 
                 {/* Footer actions */}
-                {!isUser && !message.streaming && message.content && (
+                {!isUser && message.content && (
                     <div className="flex items-center gap-3 mt-2 text-xs text-brand-500">
                         <button
                             onClick={copy}
@@ -522,12 +490,54 @@ const AdapterBadge = ({ domain }) => {
     );
 };
 
-const GatingBadge = ({ scores, winner }) => {
-    const topScore = scores[Object.keys(scores).find((k) => k.includes(winner))] ?? 0;
+const GatingScoreBar = ({ domain, score, isWinner }) => {
+    const colors = {
+        code: 'bg-blue-400',
+        math: 'bg-purple-400',
+        qa: 'bg-green-400',
+        medical: 'bg-rose-400',
+    };
+    const barColor = colors[domain] || 'bg-brand-400';
+    const barWidth = `${Math.round(score * 100)}%`;
+
     return (
-        <span className="inline-flex items-center gap-1 text-xs text-brand-500 px-2 py-0.5 rounded-full bg-brand-50 border border-brand-100">
-            {(topScore * 100).toFixed(1)}% confidence
-        </span>
+        <div className="flex items-center justify-between text-xs font-medium">
+            <div className="w-16 text-brand-600 flex items-center gap-1">
+                {isWinner && <span className="text-yellow-500">★</span>}
+                <span>{domain}</span>
+            </div>
+            <div className="flex-1 mx-3 h-5 bg-brand-100 rounded-full overflow-hidden">
+                <div
+                    className={`h-full ${barColor} transition-all duration-500 flex items-center justify-center`}
+                    style={{ width: barWidth }}
+                >
+                    {score > 0.15 && <span className="text-white text-[10px] font-bold">{(score * 100).toFixed(0)}%</span>}
+                </div>
+            </div>
+            <div className="w-12 text-right text-brand-700 font-semibold">{(score * 100).toFixed(1)}</div>
+        </div>
+    );
+};
+
+const GatingBadge = ({ scores, winner }) => {
+    if (!scores) return null;
+
+    return (
+        <motion.div
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mt-3 p-3 bg-gradient-to-br from-brand-50 to-brand-50/50 border border-brand-100 rounded-xl space-y-2"
+        >
+            <div className="text-xs font-semibold text-brand-600 uppercase tracking-wider">Gating Distribution</div>
+            {Object.entries(scores).map(([domain, score]) => (
+                <GatingScoreBar
+                    key={domain}
+                    domain={domain}
+                    score={score}
+                    isWinner={domain === winner}
+                />
+            ))}
+        </motion.div>
     );
 };
 
