@@ -5,7 +5,6 @@ import os
 from huggingface_hub import snapshot_download, login
 import time
 import threading
-from collections import OrderedDict
 try:
     from google.colab import userdata
 except ImportError:
@@ -55,10 +54,7 @@ BLEND_THRESHOLD      = 0.60
 
 _adapter_delta_cache: dict = {}
 
-# Global lock - serializes all generation calls so adapter weight
-# mutations (merge/unmerge, delta apply/remove) don't collide.
-# Streaming requires this because weights must stay mutated for the
-# entire duration of the background generation thread.
+# Serializes generation so adapter weight mutations don't collide across requests.
 _model_lock = threading.Lock()
 
 global_systems = {
@@ -144,7 +140,7 @@ def load_all_models():
 
 
 # ==============================================================================
-# SOFT BLENDING HELPERS (unchanged)
+# SOFT BLENDING HELPERS
 # ==============================================================================
 
 def _get_adapter_source(domain: str) -> str:
@@ -223,20 +219,8 @@ def _build_blended_deltas(
 
 # ==============================================================================
 # SHARED ROUTING LOGIC
-# Extracted from process_query so both streaming and non-streaming can use it.
 # ==============================================================================
 def _run_firewall_and_gating(query: str):
-    """
-    Returns (fw_label, routing_info) where routing_info has:
-        routing_mode:   "hard" | "blend" | "base"
-        winning_domain: str | None
-        top1_prob:      float
-        top2_prob:      float
-        top1_domain:    str | None
-        top2_domain:    str | None
-        gating_scores:  dict
-    If fw_label == "INJECTION", routing_info is None.
-    """
     fw_tokenizer = global_systems["firewall_tokenizer"]
     fw_model     = global_systems["firewall_model"]
 
@@ -317,7 +301,7 @@ def _run_firewall_and_gating(query: str):
 def _setup_adapter_for_generation(routing_info: dict):
     """
     Mutates the base model in place to apply the routed adapter.
-    Returns a cleanup callable that MUST be invoked to restore base weights.
+    Returns (model, cleanup_fn). cleanup_fn MUST be called to restore base weights.
     """
     base_model     = global_systems["base_model"]
     routing_mode   = routing_info["routing_mode"]
@@ -381,7 +365,7 @@ def _postprocess_response(response: str, winning_domain: str | None) -> str:
 
 
 # ==============================================================================
-# NON-STREAMING INFERENCE (kept for backward compat)
+# NON-STREAMING INFERENCE
 # ==============================================================================
 def process_query(query: str) -> dict:
     if any(m is None for m in global_systems.values()):
@@ -459,7 +443,6 @@ def process_query(query: str) -> dict:
 
 # ==============================================================================
 # STREAMING INFERENCE
-# Yields dicts that the API layer serializes to NDJSON.
 # ==============================================================================
 def process_query_stream(query: str):
     """
@@ -496,8 +479,6 @@ def process_query_stream(query: str):
 
     print(f"[Stream] {routing_mode.upper()} -> {winning_domain or 'base'} (conf={routing_info['top1_prob']:.3f})")
 
-    # Emit routing metadata first so the frontend knows which adapter before
-    # any tokens arrive.
     yield {
         "type":              "meta",
         "adapter_used":      winning_domain if winning_domain else "base_model",
@@ -507,8 +488,6 @@ def process_query_stream(query: str):
         "firewall_label":    fw_label,
     }
 
-    # Acquire the model lock for the full duration of streaming. Deltas must
-    # remain applied while the background generate thread runs.
     with _model_lock:
         model, cleanup = _setup_adapter_for_generation(routing_info)
 
@@ -529,9 +508,6 @@ def process_query_stream(query: str):
 
             ngram_size = 5 if winning_domain == "math" else 3
 
-            # TextIteratorStreamer yields decoded text chunks as the model
-            # generates. skip_prompt=True means we only see new tokens, not
-            # the input prompt echoed back.
             streamer = TextIteratorStreamer(
                 base_tokenizer,
                 skip_prompt=True,
@@ -550,9 +526,6 @@ def process_query_stream(query: str):
                 streamer=streamer,
             )
 
-            # model.generate is blocking, so run it in a background thread.
-            # The streamer is the bridge: generate pushes tokens into it,
-            # we pull tokens out in the main thread and yield them.
             gen_thread = threading.Thread(
                 target=lambda: _safe_generate(model, gen_kwargs)
             )
@@ -579,11 +552,6 @@ def process_query_stream(query: str):
 
 
 def _safe_generate(model, gen_kwargs):
-    """
-    Wrapper so exceptions in the generation thread don't silently deadlock
-    the streamer. If generate blows up, the streamer will raise on the
-    consumer side after its timeout.
-    """
     try:
         with torch.inference_mode():
             model.generate(**gen_kwargs)
