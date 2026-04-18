@@ -49,7 +49,7 @@ print(f"Using device: {DEVICE}")
 # ==============================================================================
 # ROUTING THRESHOLDS
 # ==============================================================================
-HARD_ROUTE_THRESHOLD = 0.85
+HARD_ROUTE_THRESHOLD = 0.75
 BLEND_THRESHOLD      = 0.60
 
 _adapter_delta_cache: dict = {}
