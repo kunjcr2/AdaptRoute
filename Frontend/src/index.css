@@ -115,8 +115,41 @@
   padding: 0.9em 1em;
   border-radius: 8px;
   overflow-x: auto;
+  overflow-y: auto;
+  max-height: 400px;
   margin: 0.75em 0;
   font-size: 0.85em;
+  /* Prevent code from breaking out of the bubble */
+  max-width: 100%;
+}
+
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  /* Don't wrap code lines - let them scroll horizontally */
+  white-space: pre;
+  word-wrap: normal;
+}
+
+/* Nicer scrollbars for code blocks */
+.markdown-body pre::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+
+.markdown-body pre::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+}
+
+.markdown-body pre::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+.markdown-body pre::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
 }
 
 .markdown-body pre code {

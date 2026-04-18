@@ -278,9 +278,14 @@ def _run_firewall_and_gating(query: str):
     elif top1_prob >= BLEND_THRESHOLD and top1_domain and top2_domain:
         routing_mode   = "blend"
         winning_domain = top1_domain
+    elif top1_prob >= BLEND_THRESHOLD and top1_domain:
+        # Top-1 is a valid domain above blend threshold, but top-2 is "general"
+        # or some other non-mappable label. Hard-route instead of giving up.
+        routing_mode   = "hard"
+        winning_domain = top1_domain
     else:
         routing_mode   = "base"
-        winning_domain = None
+    winning_domain = None
 
     gating_scores = {
         gate_id2label.get(i, str(i)).lower(): round(probs[i].item(), 6)

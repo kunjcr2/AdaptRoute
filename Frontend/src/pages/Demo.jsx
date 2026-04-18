@@ -111,10 +111,17 @@ const Demo = () => {
         return null;
     }, [activeChat]);
 
-    // Auto-scroll to bottom on new message/token
+    // Track message count so we only scroll when a NEW message is added,
+    // not when the last message's content is being updated by streaming tokens.
+    const prevMessageCountRef = useRef(0);
+
     useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [activeChat?.messages]);
+        const count = activeChat?.messages.length ?? 0;
+        if (count > prevMessageCountRef.current) {
+            messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }
+        prevMessageCountRef.current = count;
+    }, [activeChat?.messages.length, activeChat?.id]);
 
     // ── Chat management ──
     const createChat = () => {
