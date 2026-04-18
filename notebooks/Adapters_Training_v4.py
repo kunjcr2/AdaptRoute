@@ -7,7 +7,7 @@ Original file is located at
     https://colab.research.google.com/drive/10wUcEDCLmr34wTvrUqcNbOnLi5qFru__
 """
 
-!pip install trl evaluate
+# !pip install trl evaluate
 
 """
 AdaptRoute v4 — Full Training Pipeline
