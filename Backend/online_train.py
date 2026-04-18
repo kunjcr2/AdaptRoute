@@ -43,13 +43,12 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import LoraConfig, get_peft_model, TaskType, PeftModel
 from trl import GRPOTrainer, GRPOConfig
 from huggingface_hub import login
-from google.colab import userdata
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
-HF_TOKEN      = userdata.get("HF_TOKEN")
-WANDB_API_KEY = userdata.get("WANDB_API")
+HF_TOKEN      = os.getenv("HF_TOKEN")
+WANDB_API_KEY = os.getenv("WANDB_API")
 HF_USERNAME   = "kunjcr2"
 VERSION       = "v4"
 
@@ -81,140 +80,6 @@ if HF_TOKEN:
 if WANDB_API_KEY:
     wandb.login(key=WANDB_API_KEY)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# HARDCODED SEED DATA
-# Format: {question, answer (reference), domain}
-# In production this comes from query_log.jsonl logged by pipeline_v4.py
-# These are used when the log file doesn't exist or has too few samples
-# ─────────────────────────────────────────────────────────────────────────────
-SEED_DATA = [
-    # CODE
-    {
-        "question": "Write a Python function to reverse a string.",
-        "answer":   "def reverse_string(s):\n    return s[::-1]",
-        "domain":   "code",
-    },
-    {
-        "question": "Write a Python function to check if a number is prime.",
-        "answer":   "def is_prime(n):\n    if n < 2: return False\n    for i in range(2, int(n**0.5)+1):\n        if n % i == 0: return False\n    return True",
-        "domain":   "code",
-    },
-    {
-        "question": "How do you sort a list of dictionaries by a key in Python?",
-        "answer":   "sorted_list = sorted(list_of_dicts, key=lambda x: x['key'])",
-        "domain":   "code",
-    },
-    {
-        "question": "Write a Python class for a stack data structure.",
-        "answer":   "class Stack:\n    def __init__(self):\n        self.items = []\n    def push(self, item):\n        self.items.append(item)\n    def pop(self):\n        return self.items.pop()\n    def is_empty(self):\n        return len(self.items) == 0",
-        "domain":   "code",
-    },
-    {
-        "question": "How do you read a CSV file in Python using pandas?",
-        "answer":   "import pandas as pd\ndf = pd.read_csv('file.csv')",
-        "domain":   "code",
-    },
-    {
-        "question": "Write a Python function to find the factorial of a number.",
-        "answer":   "def factorial(n):\n    if n == 0: return 1\n    return n * factorial(n-1)",
-        "domain":   "code",
-    },
-    {
-        "question": "How do you merge two dictionaries in Python?",
-        "answer":   "merged = {**dict1, **dict2}  # Python 3.5+\n# or: merged = dict1 | dict2  # Python 3.9+",
-        "domain":   "code",
-    },
-    {
-        "question": "Write a Python generator that yields Fibonacci numbers.",
-        "answer":   "def fibonacci():\n    a, b = 0, 1\n    while True:\n        yield a\n        a, b = b, a + b",
-        "domain":   "code",
-    },
-    # MATH
-    {
-        "question": "What is the derivative of x^3 + 2x^2 - 5x + 1?",
-        "answer":   "3x^2 + 4x - 5",
-        "domain":   "math",
-    },
-    {
-        "question": "Solve for x: 2x + 6 = 14",
-        "answer":   "2x = 14 - 6 = 8, so x = 4",
-        "domain":   "math",
-    },
-    {
-        "question": "What is the area of a circle with radius 7?",
-        "answer":   "Area = π * r² = π * 49 ≈ 153.94 square units",
-        "domain":   "math",
-    },
-    {
-        "question": "What is the integral of 2x dx?",
-        "answer":   "∫2x dx = x² + C",
-        "domain":   "math",
-    },
-    {
-        "question": "If a train travels 120 km in 2 hours, what is its speed?",
-        "answer":   "Speed = Distance / Time = 120 / 2 = 60 km/h",
-        "domain":   "math",
-    },
-    {
-        "question": "What is the sum of angles in a triangle?",
-        "answer":   "The sum of interior angles in a triangle is always 180 degrees.",
-        "domain":   "math",
-    },
-    {
-        "question": "Simplify: (x^2 - 4) / (x - 2)",
-        "answer":   "(x^2 - 4) / (x - 2) = (x+2)(x-2) / (x-2) = x + 2, for x ≠ 2",
-        "domain":   "math",
-    },
-    {
-        "question": "What is the Pythagorean theorem?",
-        "answer":   "In a right triangle: a² + b² = c², where c is the hypotenuse.",
-        "domain":   "math",
-    },
-    # MEDICAL
-    {
-        "question": "What are the common symptoms of type 2 diabetes?",
-        "answer":   "Common symptoms include increased thirst, frequent urination, fatigue, blurred vision, slow-healing wounds, and frequent infections.",
-        "domain":   "medical",
-    },
-    {
-        "question": "What is hypertension and how is it diagnosed?",
-        "answer":   "Hypertension is persistently elevated blood pressure ≥130/80 mmHg. It is diagnosed through repeated blood pressure measurements on different occasions.",
-        "domain":   "medical",
-    },
-    {
-        "question": "What is the mechanism of action of ibuprofen?",
-        "answer":   "Ibuprofen is a non-selective COX inhibitor that blocks cyclooxygenase-1 and COX-2 enzymes, reducing prostaglandin synthesis and thereby decreasing inflammation, pain, and fever.",
-        "domain":   "medical",
-    },
-    {
-        "question": "What are the warning signs of a heart attack?",
-        "answer":   "Warning signs include chest pain or pressure, pain radiating to the arm or jaw, shortness of breath, nausea, cold sweat, and lightheadedness.",
-        "domain":   "medical",
-    },
-    {
-        "question": "What is the difference between Type 1 and Type 2 diabetes?",
-        "answer":   "Type 1 is an autoimmune condition where the pancreas produces no insulin. Type 2 involves insulin resistance and relative insulin deficiency, usually in adults.",
-        "domain":   "medical",
-    },
-    {
-        "question": "What is a normal resting heart rate?",
-        "answer":   "A normal resting heart rate for adults is 60-100 beats per minute. Athletes may have rates as low as 40 bpm.",
-        "domain":   "medical",
-    },
-    {
-        "question": "What does BMI measure and what are the categories?",
-        "answer":   "BMI (Body Mass Index) = weight(kg) / height(m)². Categories: Underweight <18.5, Normal 18.5-24.9, Overweight 25-29.9, Obese ≥30.",
-        "domain":   "medical",
-    },
-    {
-        "question": "What is the role of white blood cells in the immune system?",
-        "answer":   "White blood cells (leukocytes) defend the body against infection and disease. They identify and destroy pathogens, produce antibodies, and regulate immune responses.",
-        "domain":   "medical",
-    },
-]
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 1 — LOAD QUERY LOG
 # ─────────────────────────────────────────────────────────────────────────────
@@ -241,7 +106,7 @@ def load_query_log() -> list[dict]:
         print(f"[Log] {LOG_FILE} not found — using seed data only")
 
     # Merge with seed data — seed data fills gaps for domains with few logs
-    all_data = records + SEED_DATA
+    all_data = records
     print(f"[Log] Total samples after merging with seed data: {len(all_data)}")
     return all_data
 
@@ -272,7 +137,7 @@ def length_score(text: str, ideal_max: int = 256) -> float:
     return max(0.0, 1.0 - (n_tokens - ideal_max) / ideal_max)
 
 
-def compute_rewards(records: list[dict], batch_size: int = 32) -> list[dict]:
+def compute_rewards(records: list[dict]) -> list[dict]:
     """
     Score each record with:
       reward = 0.5 * bertscore_f1   (semantic match to reference answer)
@@ -292,8 +157,7 @@ def compute_rewards(records: list[dict], batch_size: int = 32) -> list[dict]:
     )
 
     scored = []
-    questions  = [r["question"] for r in records]
-    references = [r["answer"]   for r in records]
+    references = [r["answer"] for r in records]
 
     # BERTScore needs a "candidate" — we use the question itself as the proxy
     # since we don't have the model's actual response yet (it will be generated
@@ -359,7 +223,7 @@ def _get_bert_scorer() -> BERTScorer:
     return _bert_scorer
 
 
-def grpo_reward_fn(completions: list, reference: list[str], **kwargs) -> list[float]:
+def grpo_reward_fn(completions: list, reference: list[str], **_) -> list[float]:
     # GRPOTrainer passes completions as list of message dicts — extract text
     completion_texts = []
     for c in completions:
@@ -544,22 +408,36 @@ def log_query(question: str, model_response: str, domain: str):
 # MAIN — full retraining loop
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run_retraining_loop():
+def run_retraining_loop(stop_event=None, on_phase=None):
     """
     Full offline retraining pipeline:
       1. Load query logs + seed data
       2. Score all records with reward model
       3. For each domain with enough samples → run GRPO → push adapter
+
+    stop_event: threading.Event — when set, loop stops between domains.
+    on_phase: callable(phase: str, domain: str | None) — progress hook for
+              the API server to track status.  Phases: loading, scoring,
+              training, done_domain, skipped, complete, stopped.
     """
+    def _phase(phase, domain=None):
+        if on_phase:
+            try:
+                on_phase(phase, domain)
+            except Exception:
+                pass
+
     t0 = time.time()
     print("\n" + "█"*60)
     print("  AdaptRoute — Continual Learning Loop")
     print("█"*60 + "\n")
 
     # 1. Load data
+    _phase("loading")
     all_records = load_query_log()
 
     # 2. Score
+    _phase("scoring")
     scored_records = compute_rewards(all_records)
 
     # Save scored records for inspection
@@ -571,11 +449,17 @@ def run_retraining_loop():
 
     # 3. Split by domain and retrain each adapter
     for domain in ADAPTER_REPOS.keys():
+        if stop_event and stop_event.is_set():
+            print("[Stop] Training stopped by user request.")
+            _phase("stopped")
+            return
+
         domain_records = [r for r in scored_records if r.get("domain") == domain]
 
         if len(domain_records) < MIN_SAMPLES_TO_RETRAIN:
             print(f"\n[Skip] {domain}: only {len(domain_records)} samples "
                   f"(need {MIN_SAMPLES_TO_RETRAIN}). Skipping.")
+            _phase("skipped", domain)
             continue
 
         # Sort by reward descending — train on the best examples
@@ -585,7 +469,9 @@ def run_retraining_loop():
               f"mean reward: {np.mean([r['reward'] for r in domain_records]):.3f} | "
               f"top reward: {domain_records[0]['reward']:.3f}")
 
+        _phase("training", domain)
         retrain_adapter(domain, domain_records)
+        _phase("done_domain", domain)
         print(f"[Timer] After {domain}: {(time.time()-t0)/3600:.2f} hrs")
 
     total = (time.time() - t0) / 3600
@@ -595,6 +481,7 @@ def run_retraining_loop():
     for d, r in ADAPTER_REPOS.items():
         print(f"    {d:<8} → {r}")
     print("█"*60 + "\n")
+    _phase("complete")
 
 
 if __name__ == "__main__":
