@@ -295,7 +295,9 @@ def process_query(query: str) -> dict:
     with torch.no_grad():
         gate_outputs = gating_model(**gate_inputs)
 
-    probs         = torch.softmax(gate_outputs.logits, dim=-1).squeeze()
+    GATE_TEMPERATURE = 3.0   # tune this — higher = softer distribution
+    probs = torch.softmax(gate_outputs.logits / GATE_TEMPERATURE, dim=-1).squeeze()
+
     gate_id2label = gating_model.config.id2label
 
     # Sort all domains by confidence descending
@@ -445,7 +447,7 @@ def process_query(query: str) -> dict:
     t_total = time.time() - t_start
 
     gating_scores = {
-        gate_id2label.get(i, str(i)).lower(): round(probs[i].item(), 4)
+        gate_id2label.get(i, str(i)).lower(): round(probs[i].item(), 6)
         for i in range(len(probs))
     }
 
@@ -454,7 +456,7 @@ def process_query(query: str) -> dict:
         "response":           response,
         "adapter_used":       winning_domain if winning_domain else "base_model",
         "routing_mode":       routing_mode,           # new field: "hard" | "blend" | "base"
-        "gating_confidence":  round(top1_prob, 4),
+        "gating_confidence":  round(top1_prob, 6),
         "gating_scores":      gating_scores,
         "firewall_label":     fw_label,
         "time_seconds":       round(t_total, 2),

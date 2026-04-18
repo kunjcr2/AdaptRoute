@@ -22,17 +22,18 @@ User query
     ▼
 ┌──────────────────────────────────────┐
 │   🧠  Gating Network (DistilBERT)   │
-│   5-class: code|math|qa|medical|     │  ← task routing
+│   4-class: code|math|medical|       │  ← task routing
 │            general                    │
 └──────────────────────────────────────┘
     │
-    ├── code/math/qa/medical → Load domain LoRA adapter
-    ├── general              → Use base model (no adapter)
+    ├── >0.85 confidence → Hard route to single adapter
+    ├── 0.60–0.85        → Soft blend top-2 adapters (weights interpolated)
+    └── <0.60            → Base model only
     │
     ▼
 ┌──────────────────────────────────────┐
-│   Qwen2.5-1.5B (bfloat16)           │
-│   + dynamically loaded LoRA adapter  │  ← generation
+│   Gemma-3-1B-It (bfloat16)           │
+│   + Dynamic LoRA Blending            │  ← generation
 └──────────────────────────────────────┘
     │
     ▼
@@ -92,32 +93,36 @@ Blocks adversarial prompt injections, jailbreaks, and hidden system-note attacks
 
 | Component | Details |
 |-----------|---------|
-| Model | [kunjcr2/gating-bert-adaptroute](https://huggingface.co/kunjcr2/gating-bert-adaptroute ) |
+| Model | [kunjcr2/gating-bert-adaptroute-v4](https://huggingface.co/kunjcr2/gating-bert-adaptroute-v4 ) |
 | Base | `distilbert-base-uncased` + LoRA (merged) |
-| Classes | `code` · `math` · `qa` · `medical` · `general` |
+| Classes | `code` · `math` · `medical` · `general` |
 | Latency | ~5ms on CPU |
 | Training | `notebooks/train_gating_v2.py` |
 
-The 5th `general` class ensures queries like *"How do I open a tight jar?"* or *"What is the history of the internet?"* get routed to the base model without any adapter — instead of being misclassified into a specialist domain.
+The `general` class ensures queries like *"How do I open a tight jar?"* or *"What is the history of the internet?"* get routed to the base model without any adapter — instead of being misclassified into a specialist domain.
+
+**Routing Logic:**
+- **Confidence > 0.85**: Hard route to top-1 adapter.
+- **0.60–0.85**: Soft blend top-2 adapters (weighted interpolation of LoRA deltas).
+- **< 0.60**: Base model only (zero adapter influence).
 
 ### LoRA Expert Adapters
 
-Four domain-specific adapters trained via SFT on Qwen2.5-1.5B:
+Standardized `v4` adapters trained via SFT on Gemma-3-1B-It:
 
 | Adapter | HuggingFace Repo | Domain |
 |---------|-------------------|--------|
-| `lora-code` | [kunjcr2/code-adaptroute-v3](https://huggingface.co/kunjcr2/code-adaptroute-v3 ) | Python code generation |
-| `lora-math` | [kunjcr2/math-adaptroute-v3](https://huggingface.co/kunjcr2/math-adaptroute-v3 ) | Step-by-step math reasoning |
-| `lora-qa` | [kunjcr2/qa-adaptroute-v3](https://huggingface.co/kunjcr2/qa-adaptroute-v3 ) | Factual question answering |
-| `lora-medical` | [kunjcr2/medical-adaptroute-v3](https://huggingface.co/kunjcr2/medical-adaptroute-v3 ) | Clinical triage & medical Q&A |
+| `lora-code` | [kunjcr2/code-adaptroute-v4](https://huggingface.co/kunjcr2/code-adaptroute-v4 ) | Python code generation |
+| `lora-math` | [kunjcr2/math-adaptroute-v4](https://huggingface.co/kunjcr2/math-adaptroute-v4 ) | Step-by-step math reasoning |
+| `lora-medical` | [kunjcr2/medical-adaptroute-v4](https://huggingface.co/kunjcr2/medical-adaptroute-v4 ) | Clinical triage & medical Q&A |
 
 ### Base Model
 
 | Model | Params | Precision | Attention |
 |-------|--------|-----------|-----------|
-| [Qwen/Qwen2.5-1.5B](https://huggingface.co/Qwen/Qwen2.5-1.5B ) | 1.5B | bfloat16 | SDPA (Flash Attention) |
+| [google/gemma-3-1b-it](https://huggingface.co/google/gemma-3-1b-it ) | 1.1B | bfloat16 | SDPA |
 
-Weights are fully frozen. Only LoRA adapters are trained.
+Weights are fully frozen. Only LoRA adapters are trained and interpolated at inference time.
 
 ---
 
@@ -181,7 +186,7 @@ To switch: change `import pipeline` → `import pipeline_vllm as pipeline` in `a
 
 ## Training
 
-### Gating Network (5-class)
+### Gating Network (4-class)
 
 ```bash
 cd notebooks
@@ -189,9 +194,20 @@ export HF_TOKEN="hf_..."
 python train_gating_v2.py
 ```
 
-Trains a DistilBERT + LoRA classifier with 5 classes. The `general` class is built from `tatsu-lab/alpaca` + handcrafted queries to prevent misrouting.
+Trains a DistilBERT + LoRA classifier with 4 classes (`code`, `math`, `medical`, `general`). The `general` class is built from `tatsu-lab/alpaca` + handcrafted queries to prevent misrouting.
 
-**H200 optimised:** batch_size=128, bf16, 4 dataloader workers.
+### Continual Learning Loop (GRPO)
+
+```bash
+cd Backend
+python online_train.py
+```
+
+AdaptRoute includes an offline retraining loop that:
+1.  **Logs** real-world queries and model responses.
+2.  **Scores** responses using a reward model (Semantic relevance + Fluency + Conciseness).
+3.  **Retrains** domain adapters using **GRPO** (Group Relative Policy Optimization) to align the model with high-reward responses.
+4.  **Pushes** updated adapters back to the Hub.
 
 ### LoRA Adapters
 
@@ -227,16 +243,16 @@ Returns server status and loaded model info.
   "status": "success",
   "response": "The common symptoms of diabetes include...",
   "adapter_used": "medical",
+  "routing_mode": "hard",
   "gating_confidence": 0.9987,
   "gating_scores": {
     "code": 0.0001,
     "math": 0.0002,
-    "qa": 0.0010,
     "medical": 0.9987,
-    "general": 0.0000
+    "general": 0.0010
   },
   "firewall_label": "SAFE",
-  "time_seconds": 2.14
+  "time_seconds": 1.42
 }
 ```
 
@@ -275,5 +291,6 @@ AdaptRoute is a decoupled Mixture of Experts — the routing gate and experts ar
 - [Mixtral of Experts](https://arxiv.org/abs/2401.04088 )
 - [PEFT library](https://huggingface.co/docs/peft )
 - [vLLM](https://github.com/vllm-project/vllm )
-- [Qwen2.5 model family](https://huggingface.co/Qwen )
+- [google/gemma-3-1b-it](https://huggingface.co/google/gemma-3-1b-it )
 - [ProtectAI prompt injection detector](https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2 )
+- [GRPO: Group Relative Policy Optimization](https://arxiv.org/abs/2402.03300 )

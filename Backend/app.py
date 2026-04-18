@@ -4,9 +4,12 @@ AdaptRoute FastAPI Server
 Thin wrapper around pipeline.py — exposes the existing
 prepare() / load_all_models() / process_query() functions as REST endpoints.
 
+Every successful query is appended to query_log.jsonl for the
+continual learning loop (continual_learning.py).
+
 Usage (on the SSH / H200 server):
     cd Backend
-    python app.py                 # starts on 0.0.0.0:8000
+    python app.py                 # starts on 0.0.0.0:7180
     PORT=9000 python app.py       # override port
 
 Compatible with Python 3.11.
@@ -24,6 +27,9 @@ import uvicorn
 # ── Import existing pipeline (unchanged) ────────────────────────
 import pipeline
 
+# ── Import logger from continual learning loop ──────────────────
+from online_train import log_query
+
 
 # ── Pydantic schemas ────────────────────────────────────────────
 
@@ -36,6 +42,8 @@ class QueryResponse(BaseModel):
     response: Optional[str] = None
     message: Optional[str] = None
     adapter_used: Optional[str] = None
+    routing_mode: Optional[str] = None
+    gating_confidence: Optional[float] = None
     gating_scores: Optional[Dict[str, float]] = None
     firewall_label: Optional[str] = None
     time_seconds: Optional[float] = None
@@ -101,8 +109,25 @@ async def generate(req: QueryRequest):
     """
     Run a query through the full AdaptRoute pipeline:
     Firewall → Gating → Adapter → Generation.
+
+    Every successful (non-blocked) response is appended to
+    query_log.jsonl for the continual learning loop.
     """
     result = pipeline.process_query(req.query)
+
+    # Log every successful response for continual learning.
+    # Blocked / error responses are not logged — no useful signal.
+    if result.get("status") == "success" and result.get("response"):
+        try:
+            log_query(
+                question=req.query,
+                model_response=result["response"],
+                domain=result.get("adapter_used", "general"),
+            )
+        except Exception as e:
+            # Never let logging crash the API response
+            print(f"[Log] Warning: failed to write query log — {e}")
+
     return QueryResponse(**result)
 
 

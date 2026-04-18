@@ -425,7 +425,7 @@ const Message = ({ message }) => {
                         )}
                         {message.confidence != null && (
                             <span className="text-[10px] font-mono text-brand-400">
-                                conf: {(message.confidence * 100).toFixed(1)}%
+                                conf: {(message.confidence * 100).toFixed(3)}%
                             </span>
                         )}
                         <div className="w-full h-0" /> {/* break */}
@@ -537,10 +537,10 @@ const GatingScoreBar = ({ domain, score, isWinner }) => {
                     className={`h-full ${barColor} transition-all duration-500 flex items-center justify-center`}
                     style={{ width: barWidth }}
                 >
-                    {score > 0.15 && <span className="text-white text-xs font-bold">{(score * 100).toFixed(0)}%</span>}
+                    {score > 0.15 && <span className="text-white text-xs font-bold">{(score * 100).toFixed(2)}%</span>}
                 </div>
             </div>
-            <div className="w-16 text-right text-brand-700 font-semibold">{(score * 100).toFixed(1)}</div>
+            <div className="w-16 text-right text-brand-700 font-semibold">{(score * 100).toFixed(2)}</div>
         </div>
     );
 };
