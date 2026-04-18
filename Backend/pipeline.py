@@ -285,7 +285,7 @@ def _run_firewall_and_gating(query: str):
         winning_domain = top1_domain
     else:
         routing_mode   = "base"
-    winning_domain = None
+        winning_domain = None
 
     gating_scores = {
         gate_id2label.get(i, str(i)).lower(): round(probs[i].item(), 6)
