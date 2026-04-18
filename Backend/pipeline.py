@@ -5,17 +5,29 @@ import os
 from huggingface_hub import snapshot_download, login
 import time
 from collections import OrderedDict
-from google.colab import userdata
+try:
+    from google.colab import userdata
+except ImportError:
+    userdata = None
 
 # ==============================================================================
 # HUGGING FACE AUTH
 # ==============================================================================
-HF_TOKEN = userdata.get("HF_TOKEN")
+HF_TOKEN = None
+if userdata:
+    try:
+        HF_TOKEN = userdata.get("HF_TOKEN")
+    except Exception:
+        pass
+
+if not HF_TOKEN:
+    HF_TOKEN = os.getenv("HF_TOKEN")
+
 if HF_TOKEN:
     login(token=HF_TOKEN, add_to_git_credential=False)
-    print("✓ HuggingFace login OK")
+    print("[Auth] HF_TOKEN login OK")
 else:
-    print("⚠ HF_TOKEN not set — public models only")
+    print("[Auth] HF_TOKEN not set - public models only or use 'huggingface-cli login'")
 
 # ==============================================================================
 # CONFIGURATION
@@ -462,5 +474,11 @@ def process_query(query: str) -> dict:
         "time_seconds":       round(t_total, 2),
     }
 
-prepare()
-load_all_models()
+if __name__ == "__main__":
+    try:
+        from google.colab import userdata
+        os.environ["HF_TOKEN"] = userdata.get("HF_TOKEN")
+    except ImportError:
+        pass
+    prepare()
+    load_all_models()

@@ -18,23 +18,20 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModelForSequen
 from peft import PeftModel
 
 # Import your pipeline - handle different possible import names
+# Import your pipeline
 try:
-    from pipeline_v4 import (
+    import pipeline
+    from pipeline import (
         load_all_models, global_systems, FIREWALL_MODEL, BASE_MODEL, 
         ADAPTER_REPOS, ADAPTERS_DIR, DEVICE, prepare
     )
-    print("✓ Using pipeline_v4.py")
-except ImportError:
-    try:
-        from pipeline import (
-            load_all_models, global_systems, FIREWALL_MODEL, BASE_MODEL, 
-            ADAPTER_REPOS, ADAPTERS_DIR, DEVICE, prepare
-        )
-        print("✓ Using pipeline.py")
-    except ImportError:
-        print("✗ Error: Could not find pipeline_v4.py or pipeline.py")
-        print("  Make sure your pipeline file is in the same directory")
-        sys.exit(1)
+    print("[Pipeline] Pipeline module loaded")
+except ImportError as e:
+    print(f"[ERROR] Could not import 'pipeline.py': {e}")
+    print("  Make sure your pipeline file is in the same directory and all dependencies are installed.")
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
 
 
 def fix_json_line(line):
@@ -219,16 +216,16 @@ def generate_answers_for_query_log(input_file="query_log.jsonl", output_file="qu
     # Backup original file if requested
     if backup_original and Path(input_file).exists():
         backup_file = f"{input_file}.backup"
-        print(f"📋 Creating backup: {backup_file}")
+        print(f"[Backup] Creating backup: {backup_file}")
         try:
             import shutil
             shutil.copy2(input_file, backup_file)
-            print(f"✓ Backup created at {backup_file}")
+            print(f"[Backup] Backup created at {backup_file}")
         except Exception as e:
-            print(f"⚠️ Warning: Could not create backup: {e}")
+            print(f"[WARNING] Could not create backup: {e}")
     
     # Read all records from the JSONL file
-    print(f"\n📖 Reading {input_file}...")
+    print(f"\n[Read] Reading {input_file}...")
     try:
         with open(f"./{input_file}", 'r', encoding='utf-8') as f:
             for line_num, line in enumerate(f, 1):
@@ -243,38 +240,40 @@ def generate_answers_for_query_log(input_file="query_log.jsonl", output_file="qu
                         try:
                             record = json.loads(fixed_line)
                             records.append(record)
-                            print(f"  ✓ [Line {line_num}] Fixed JSON issue: {e}")
+                            print(f"  [OK] [Line {line_num}] Fixed JSON issue: {e}")
                         except json.JSONDecodeError as e2:
-                            print(f"  ✗ [Line {line_num}] Cannot parse, skipping: {e2}")
+                            print(f"  [ERROR] [Line {line_num}] Cannot parse, skipping: {e2}")
                             continue
-        print(f"✓ Loaded {len(records)} records")
+        print(f"[Read] Loaded {len(records)} records")
     except FileNotFoundError:
-        print(f"✗ Error: {input_file} not found")
+        print(f"[ERROR] {input_file} not found")
         return
     except Exception as e:
-        print(f"✗ Error reading file: {e}")
+        print(f"[ERROR] Error reading file: {e}")
         return
     
     if not records:
-        print("✗ No valid records found in file")
+        print("[ERROR] No valid records found in file")
         return
     
     # Load models once before processing
-    print("\n🔧 Loading models...")
+    print("\n[Setup] Loading models...")
     try:
+        print("  Running pipeline.prepare()...")
+        prepare()
         load_all_models()
-        print("✓ All models loaded")
+        print("[Pipeline] All models loaded and adapters prepared")
     except Exception as e:
-        print(f"✗ Error loading models: {e}")
+        print(f"[ERROR] Error loading models: {e}")
         return
     
     # Limit questions if specified
     if max_questions and max_questions < len(records):
-        print(f"\n⚠️  Limiting to first {max_questions} questions (of {len(records)})")
+        print(f"\n[WARNING] Limiting to first {max_questions} questions (of {len(records)})")
         records = records[:max_questions]
     
     # Process each record
-    print(f"\n🤖 Generating answers for {len(records)} questions using domain-based routing...")
+    print(f"\n[Model] Generating answers for {len(records)} questions using domain-based routing...")
     print("-" * 60)
     
     updated_records = []
@@ -288,7 +287,7 @@ def generate_answers_for_query_log(input_file="query_log.jsonl", output_file="qu
         # Validate record
         is_valid, error_msg = validate_record(record)
         if not is_valid:
-            print(f"  [{idx}/{len(records)}] ⚠️  {error_msg}")
+            print(f"  [{idx}/{len(records)}] [WARNING] {error_msg}")
             # Keep record but remove timestamp
             record_copy = {k: v for k, v in record.items() if k != "timestamp"}
             updated_records.append(record_copy)
@@ -296,7 +295,7 @@ def generate_answers_for_query_log(input_file="query_log.jsonl", output_file="qu
             continue
         
         if not question:
-            print(f"  [{idx}/{len(records)}] ⚠️  Empty question, skipping")
+            print(f"  [{idx}/{len(records)}] [WARNING] Empty question, skipping")
             record_copy = {k: v for k, v in record.items() if k != "timestamp"}
             updated_records.append(record_copy)
             error_count += 1
@@ -323,19 +322,19 @@ def generate_answers_for_query_log(input_file="query_log.jsonl", output_file="qu
                 
                 # Show a preview of the answer
                 answer_preview = generated_answer[:80].replace('\n', ' ')
-                print(f"    ✓ Answer: {answer_preview}...")
+                print(f"    [OK] Answer: {answer_preview}...")
                 
             else:
                 # If generation failed, keep original answer if exists
                 error_msg = result.get('message', 'Unknown error')
-                print(f"    ✗ Generation failed: {error_msg}")
+                print(f"    [ERROR] Generation failed: {error_msg}")
                 
                 record_copy = {k: v for k, v in record.items() if k != "timestamp"}
                 updated_records.append(record_copy)
                 error_count += 1
                 
         except Exception as e:
-            print(f"    ✗ Exception: {type(e).__name__}: {e}")
+            print(f"    [ERROR] Exception: {type(e).__name__}: {e}")
             # Keep original answer without timestamp
             record_copy = {k: v for k, v in record.items() if k != "timestamp"}
             updated_records.append(record_copy)
@@ -349,25 +348,25 @@ def generate_answers_for_query_log(input_file="query_log.jsonl", output_file="qu
         with open(output_file, 'w', encoding='utf-8') as f:
             for record in updated_records:
                 f.write(json.dumps(record, ensure_ascii=False) + '\n')
-        print(f"✓ Successfully wrote to {output_file}")
+        print(f"[Save] Successfully wrote to {output_file}")
         
         # Print statistics
-        print("\n📊 Statistics:")
+        print("\n[Stats] Statistics:")
         print(f"  Total processed: {len(records)}")
-        print(f"  ✅ Successful: {success_count}")
-        print(f"  ❌ Errors: {error_count}")
+        print(f"  OK: {success_count}")
+        print(f"  ERRORS: {error_count}")
         print(f"  Success rate: {success_count/len(records)*100:.1f}%")
         
     except IOError as e:
-        print(f"✗ Error writing to {output_file}: {e}")
+        print(f"[ERROR] Error writing to {output_file}: {e}")
         return
     
-    print("\n✨ All done!")
+    print("\n[Done] All done!")
 
 
 def preview_file(file_path="query_log.jsonl", num_lines=5):
     """Preview the first few lines of the JSONL file."""
-    print(f"\n📄 Preview of {file_path} (first {num_lines} lines):")
+    print(f"\n[Preview] {file_path} (first {num_lines} lines):")
     print("-" * 60)
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
