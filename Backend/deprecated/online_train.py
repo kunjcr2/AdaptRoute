@@ -279,7 +279,7 @@ def retrain_adapter(domain: str, domain_records: list[dict]) -> None:
     # Base model. bf16 on H200 is the right default.
     base_model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL_ID,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         device_map="auto",
         attn_implementation="sdpa",
         token=HF_TOKEN if HF_TOKEN else None,
@@ -290,7 +290,7 @@ def retrain_adapter(domain: str, domain_records: list[dict]) -> None:
     model = PeftModel.from_pretrained(
         base_model,
         ADAPTER_REPOS[domain],
-        adapter_name=domain,
+        adapter_name="default",
         is_trainable=True,
         token=HF_TOKEN if HF_TOKEN else None,
     )

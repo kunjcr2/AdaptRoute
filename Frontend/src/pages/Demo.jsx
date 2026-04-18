@@ -5,7 +5,7 @@ import {
     Loader2, Cpu, ShieldAlert, AlertTriangle, User, Sparkles, Check,
     Database, Zap, Square, CheckCircle2,
 } from 'lucide-react';
-import { sendQuery, checkHealth, getWorkerUrl, getStats, getTrainStatus, startTraining, stopTraining } from '../lib/adaptroute';
+import { streamQuery, checkHealth, getWorkerUrl, getStats, getTrainStatus, startTraining, stopTraining } from '../lib/adaptroute';
 
 const STORAGE_KEY = 'adaptroute-chats-v1';
 
@@ -87,7 +87,7 @@ const Demo = () => {
 
     // Fetch query count on mount and after each completed query
     const refreshStats = useCallback(() => {
-        getStats().then((s) => setQueryCount(s.query_count)).catch(() => {});
+        getStats().then((s) => setQueryCount(s.query_count)).catch(() => { });
     }, []);
 
     useEffect(() => { refreshStats(); }, [refreshStats]);
@@ -100,10 +100,9 @@ const Demo = () => {
                 const s = await getTrainStatus();
                 if (cancelled) return;
                 setTrainStatus(s);
-                // Refresh query count when training just finished
                 if (prevTrainActive.current && !s.active) refreshStats();
                 prevTrainActive.current = s.active;
-            } catch {}
+            } catch { }
         };
         poll();
         const interval = setInterval(poll, trainStatus.active ? 2000 : 12000);
@@ -174,7 +173,19 @@ const Demo = () => {
         setChats((prev) => prev.map((c) => (c.id === activeId ? updater(c) : c)));
     }, [activeId]);
 
-    // ── Send query ──
+    // Helper: mutate only the LAST assistant message of the active chat.
+    // Used heavily during streaming to append tokens without touching earlier messages.
+    const patchLastAssistant = useCallback((patch) => {
+        updateActiveChat((c) => {
+            const msgs = [...c.messages];
+            const last = msgs[msgs.length - 1];
+            if (!last || last.role !== 'assistant') return c;
+            msgs[msgs.length - 1] = typeof patch === 'function' ? patch(last) : { ...last, ...patch };
+            return { ...c, messages: msgs };
+        });
+    }, [updateActiveChat]);
+
+    // ── Send query (STREAMING) ──
     const runQuery = useCallback(async (query) => {
         if (workerStatus !== 'online') {
             setError('Worker is not reachable. Start the Colab cell and check VITE_WORKER_URL.');
@@ -183,63 +194,88 @@ const Demo = () => {
         setError(null);
         setLoading(true);
 
-        // Insert a placeholder assistant message
+        // Insert a placeholder assistant message that we'll mutate as tokens stream in.
         const placeholder = {
             role: 'assistant',
             content: '',
             adapter: null,
+            routingMode: null,
+            confidence: null,
             gatingScores: null,
             firewallLabel: null,
             blocked: false,
+            streaming: true,
         };
         updateActiveChat((c) => ({ ...c, messages: [...c.messages, placeholder] }));
 
         try {
-            const result = await sendQuery(query);
+            await streamQuery(query, {
+                // Meta arrives first: routing info, gating scores, firewall label.
+                // Show all the badges immediately so the user sees routing before tokens arrive.
+                onMeta: (meta) => {
+                    patchLastAssistant({
+                        adapter: meta.adapter_used,
+                        routingMode: meta.routing_mode,
+                        confidence: meta.gating_confidence,
+                        gatingScores: meta.gating_scores,
+                        firewallLabel: meta.firewall_label,
+                    });
+                },
 
-            updateActiveChat((c) => {
-                const msgs = [...c.messages];
-                const last = msgs[msgs.length - 1];
-                if (!last || last.role !== 'assistant') return c;
-
-                if (result.status === 'blocked') {
-                    msgs[msgs.length - 1] = {
+                // Each token chunk is appended to the running content string.
+                // Using the functional form of patchLastAssistant so we always
+                // append to the latest content, not a stale snapshot.
+                onToken: (text) => {
+                    patchLastAssistant((last) => ({
                         ...last,
+                        content: (last.content || '') + text,
+                    }));
+                },
+
+                // Stream completed cleanly. Swap in the server's post-processed
+                // final response (trailing cleanup, etc.) and stamp the timing.
+                onDone: (info) => {
+                    patchLastAssistant((last) => ({
+                        ...last,
+                        content: info.full_response ?? last.content,
+                        seconds: info.time_seconds,
+                        streaming: false,
+                    }));
+                },
+
+                // Firewall blocked the query — mark the placeholder as blocked.
+                onBlocked: (message) => {
+                    patchLastAssistant({
                         blocked: true,
-                        content: result.message || 'Query blocked by firewall.',
-                        firewallLabel: result.firewall_label,
-                    };
-                } else if (result.status === 'success') {
-                    msgs[msgs.length - 1] = {
-                        ...last,
-                        content: result.response,
-                        adapter: result.adapter_used,
-                        routingMode: result.routing_mode,
-                        confidence: result.gating_confidence,
-                        gatingScores: result.gating_scores,
-                        firewallLabel: result.firewall_label,
-                        seconds: result.time_seconds,
-                    };
-                } else {
-                    msgs[msgs.length - 1] = {
+                        streaming: false,
+                        content: message || 'Query blocked by firewall.',
+                        firewallLabel: 'INJECTION',
+                    });
+                },
+
+                // Stream-level error. Mark the bubble as errored.
+                onError: (err) => {
+                    setError(typeof err === 'string' ? err : (err?.message || 'Stream error'));
+                    patchLastAssistant((last) => ({
                         ...last,
                         error: true,
-                        content: result.message || 'Worker error.',
-                    };
-                }
-                return { ...c, messages: msgs };
+                        streaming: false,
+                        content: last.content || 'Worker error.',
+                    }));
+                },
             });
         } catch (e) {
+            // Network-level failure before the stream even started.
             setError(e.message || String(e));
             updateActiveChat((c) => ({
                 ...c,
-                messages: c.messages.slice(0, -1), // drop placeholder on failure
+                messages: c.messages.slice(0, -1), // drop the empty placeholder
             }));
         } finally {
             setLoading(false);
             refreshStats();
         }
-    }, [updateActiveChat, workerStatus, refreshStats]);
+    }, [updateActiveChat, patchLastAssistant, workerStatus, refreshStats]);
 
     const sendMessage = async () => {
         const text = input.trim();
@@ -259,14 +295,12 @@ const Demo = () => {
 
     const regenerate = async () => {
         if (!activeChat || loading) return;
-        // Drop the last assistant message, then rerun on the last user message
         const msgs = [...activeChat.messages];
         while (msgs.length > 0 && msgs[msgs.length - 1].role === 'assistant') {
             msgs.pop();
         }
         if (msgs.length === 0) return;
 
-        // Get the last user message
         const lastUserMsg = msgs[msgs.length - 1];
         if (lastUserMsg?.role !== 'user') return;
 
@@ -395,12 +429,12 @@ const Demo = () => {
 const DOMAINS = ['code', 'math', 'medical'];
 
 const PHASE_LABEL = {
-    idle:     'Ready to train',
-    loading:  'Loading query logs…',
-    scoring:  'Scoring responses…',
-    training: null, // filled dynamically
+    idle: 'Ready to train',
+    loading: 'Loading query logs…',
+    scoring: 'Scoring responses…',
+    training: null,
     complete: 'Complete!',
-    stopped:  'Stopped',
+    stopped: 'Stopped',
 };
 
 const TrainingPanel = ({ queryCount, trainStatus, workerStatus, onTrain, onStop, trainLoading }) => {
@@ -415,13 +449,11 @@ const TrainingPanel = ({ queryCount, trainStatus, workerStatus, onTrain, onStop,
 
     return (
         <div className="border-t border-brand-100 p-4 space-y-3">
-            {/* Worker dot + query count */}
             <div className="flex items-center justify-between text-xs text-brand-500">
                 <span className="flex items-center gap-1.5">
-                    <span className={`w-2 h-2 rounded-full ${
-                        workerStatus === 'online'  ? 'bg-green-500 animate-pulse' :
+                    <span className={`w-2 h-2 rounded-full ${workerStatus === 'online' ? 'bg-green-500 animate-pulse' :
                         workerStatus === 'offline' ? 'bg-red-500' : 'bg-yellow-500 animate-pulse'
-                    }`} />
+                        }`} />
                     Worker {workerStatus}
                 </span>
                 <span className="flex items-center gap-1 text-brand-400">
@@ -430,7 +462,6 @@ const TrainingPanel = ({ queryCount, trainStatus, workerStatus, onTrain, onStop,
                 </span>
             </div>
 
-            {/* Live training status */}
             <AnimatePresence>
                 {isTraining && (
                     <motion.div
@@ -445,18 +476,17 @@ const TrainingPanel = ({ queryCount, trainStatus, workerStatus, onTrain, onStop,
                         </div>
                         <div className="flex gap-1.5">
                             {DOMAINS.map((d) => {
-                                const done   = domainsDone.includes(d);
+                                const done = domainsDone.includes(d);
                                 const active = d === currentDomain;
                                 return (
                                     <div
                                         key={d}
-                                        className={`flex-1 flex items-center justify-center gap-1 rounded-lg py-1.5 text-[10px] font-bold transition-all duration-300 ${
-                                            done   ? 'bg-green-100 text-green-700' :
+                                        className={`flex-1 flex items-center justify-center gap-1 rounded-lg py-1.5 text-[10px] font-bold transition-all duration-300 ${done ? 'bg-green-100 text-green-700' :
                                             active ? 'bg-amber-200 text-amber-900 animate-pulse' :
-                                                     'bg-brand-100 text-brand-400'
-                                        }`}
+                                                'bg-brand-100 text-brand-400'
+                                            }`}
                                     >
-                                        {done   && <CheckCircle2 className="w-3 h-3" />}
+                                        {done && <CheckCircle2 className="w-3 h-3" />}
                                         {active && <Loader2 className="w-3 h-3 animate-spin" />}
                                         <span className="capitalize">{d}</span>
                                     </div>
@@ -467,7 +497,6 @@ const TrainingPanel = ({ queryCount, trainStatus, workerStatus, onTrain, onStop,
                 )}
             </AnimatePresence>
 
-            {/* Train / Stop button */}
             {isTraining ? (
                 <button
                     onClick={onStop}
@@ -515,12 +544,6 @@ const ChatListItem = ({ chat, active, onSelect, onDelete }) => (
 
 // ── Empty state ─────────────────────────────────────────────────────────────
 const EmptyState = ({ onPick }) => {
-    const examples = [
-        { label: 'Code', text: 'Write a Python function for binary search with comments.' },
-        { label: 'Math', text: 'Find the derivative of f(x) = 3x^2 + sin(x).' },
-        { label: 'QA', text: 'Who invented the World Wide Web and when?' },
-        { label: 'Medical', text: 'What are the common early symptoms of type 2 diabetes?' },
-    ];
     return (
         <div className="text-center py-16">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-brand-100 mb-6">
@@ -528,20 +551,6 @@ const EmptyState = ({ onPick }) => {
             </div>
             <h2 className="font-serif text-3xl font-bold text-brand-900 mb-3">How can I help today?</h2>
             <p className="text-brand-600 mb-8">Watch the gating network pick the right expert in real time.</p>
-            {/* <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl mx-auto">
-                {examples.map((ex) => (
-                    <button
-                        key={ex.label}
-                        onClick={() => onPick(ex.text)}
-                        className="text-left p-4 rounded-2xl border border-brand-200 bg-white hover:border-brand-400 hover:shadow-md transition"
-                    >
-                        <div className="text-xs font-semibold text-brand-500 uppercase tracking-wider mb-1">
-                            {ex.label}
-                        </div>
-                        <div className="text-sm text-brand-800">{ex.text}</div>
-                    </button>
-                ))}
-            </div> */}
         </div>
     );
 };
@@ -570,15 +579,13 @@ const Message = ({ message }) => {
                 </div>
             )}
             <div className={`max-w-[75%] ${isUser ? 'order-1' : ''}`}>
-                {/* Adapter + gating scores */}
                 {!isUser && !message.blocked && message.adapter && (
                     <div className="mb-3 flex flex-wrap gap-2 items-center">
                         {message.routingMode && (
-                            <span className={`inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded ${
-                                message.routingMode === 'hard' ? 'bg-amber-100 text-amber-700' :
+                            <span className={`inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded ${message.routingMode === 'hard' ? 'bg-amber-100 text-amber-700' :
                                 message.routingMode === 'blend' ? 'bg-purple-100 text-purple-700' :
-                                'bg-gray-100 text-gray-600'
-                            }`}>
+                                    'bg-gray-100 text-gray-600'
+                                }`}>
                                 {message.routingMode} route
                             </span>
                         )}
@@ -587,7 +594,7 @@ const Message = ({ message }) => {
                                 conf: {(message.confidence * 100).toFixed(3)}%
                             </span>
                         )}
-                        <div className="w-full h-0" /> {/* break */}
+                        <div className="w-full h-0" />
                         {message.adapter === 'base_model' ? (
                             <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-0.5 rounded-full border bg-gray-100 text-gray-800 border-gray-200">
                                 <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60" />
@@ -604,7 +611,6 @@ const Message = ({ message }) => {
                     </div>
                 )}
 
-                {/* Blocked indicator */}
                 {message.blocked && (
                     <div className="mb-3">
                         <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-red-100 border border-red-300">
@@ -626,15 +632,22 @@ const Message = ({ message }) => {
                         }`}
                 >
                     {message.blocked && <ShieldAlert className="w-4 h-4 inline mr-2 -mt-0.5" />}
-                    {message.content || (
+                    {message.content ? (
+                        <>
+                            {message.content}
+                            {/* Blinking cursor while streaming tokens in */}
+                            {message.streaming && (
+                                <span className="inline-block w-1.5 h-4 bg-brand-400 ml-0.5 align-middle animate-pulse" />
+                            )}
+                        </>
+                    ) : (
                         <span className="inline-flex items-center gap-2 text-brand-400">
                             <Loader2 className="w-3 h-3 animate-spin" /> generating…
                         </span>
                     )}
                 </div>
 
-                {/* Footer actions */}
-                {!isUser && message.content && (
+                {!isUser && message.content && !message.streaming && (
                     <div className="flex items-center gap-3 mt-2 text-xs text-brand-500">
                         <button
                             onClick={copy}

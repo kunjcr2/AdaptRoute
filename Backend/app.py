@@ -1,21 +1,23 @@
 """
 AdaptRoute FastAPI Server
 ~~~~~~~~~~~~~~~~~~~~~~~~~
-Thin wrapper around pipeline.py — exposes the existing
-prepare() / load_all_models() / process_query() functions as REST endpoints.
+Thin wrapper around pipeline.py.
 
-Every successful query is appended to query_log.jsonl for the
-continual learning loop (online_train.py).
+Endpoints:
+    POST /generate         - non-streaming, returns full response as JSON
+    POST /generate/stream  - streaming, returns NDJSON (one JSON object per line)
+    POST /train            - trigger retraining loop
+    GET  /train/status     - training status
+    POST /train/stop       - halt training
+    GET  /health           - health check
+    GET  /stats            - query log count
 
-Usage (on the SSH / H200 server):
-    cd Backend
-    python app.py                 # starts on 0.0.0.0:7180
-    PORT=9000 python app.py       # override port
-
-Compatible with Python 3.11.
+Every successful query (streamed or not) is appended to query_log.jsonl
+for the continual learning loop (online_train.py).
 """
 
 import os
+import json
 import time
 import threading
 from contextlib import asynccontextmanager
@@ -23,13 +25,11 @@ from typing import Optional, Dict, List
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 import uvicorn
 
-# ── Import existing pipeline (unchanged) ────────────────────────
 import pipeline
-
-# ── Import logger, retraining loop, and log path ────────────────
 from online_train import log_query, run_retraining_loop, LOG_FILE
 
 
@@ -121,21 +121,16 @@ async def lifespan(_: FastAPI):
     pipeline.load_all_models()
 
     print("=" * 60)
-    print("  ✓ Server ready for requests")
+    print("  Server ready for requests")
     print("=" * 60)
     yield
     print("AdaptRoute — Shutting down")
 
 
-# ── FastAPI app ─────────────────────────────────────────────────
-
 app = FastAPI(
     title="AdaptRoute",
-    description=(
-        "Task-aware routing & LoRA-adapted inference pipeline. "
-        "Firewall → Gating Network → Dynamic Adapter → Generation."
-    ),
-    version="2.0.0",
+    description="Task-aware routing & LoRA-adapted inference pipeline.",
+    version="2.1.0",
     lifespan=lifespan,
 )
 
@@ -152,13 +147,11 @@ app.add_middleware(
 
 @app.get("/health", response_model=HealthResponse)
 async def health():
-    """Health check."""
     return HealthResponse(status="ok", message="Pipeline running.")
 
 
 @app.get("/stats", response_model=StatsResponse)
 async def stats():
-    """Return the number of queries logged in query_log.jsonl."""
     count = 0
     if LOG_FILE.exists():
         with open(LOG_FILE) as f:
@@ -168,17 +161,9 @@ async def stats():
 
 @app.post("/generate", response_model=QueryResponse)
 async def generate(req: QueryRequest):
-    """
-    Run a query through the full AdaptRoute pipeline:
-    Firewall → Gating → Adapter → Generation.
-
-    Every successful (non-blocked) response is appended to
-    query_log.jsonl for the continual learning loop.
-    """
+    """Non-streaming. Returns the full response as JSON once generation finishes."""
     result = pipeline.process_query(req.query)
 
-    # Log every successful response for continual learning.
-    # Blocked / error responses are not logged — no useful signal.
     if result.get("status") == "success" and result.get("response"):
         try:
             log_query(
@@ -187,19 +172,85 @@ async def generate(req: QueryRequest):
                 domain=result.get("adapter_used", "general"),
             )
         except Exception as e:
-            # Never let logging crash the API response
             print(f"[Log] Warning: failed to write query log — {e}")
 
     return QueryResponse(**result)
 
 
+@app.post("/generate/stream")
+async def generate_stream(req: QueryRequest):
+    """
+    Streaming. Returns NDJSON: one JSON object per line, terminated with \\n.
+
+    Frontend usage (fetch + ReadableStream):
+        const res = await fetch('/generate/stream', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({query: '...'})
+        });
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        while (true) {
+            const {done, value} = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, {stream: true});
+            const lines = buf.split('\\n');
+            buf = lines.pop();  // keep incomplete last line
+            for (const line of lines) {
+                if (!line) continue;
+                const obj = JSON.parse(line);
+                // obj.type is one of: meta, token, done, blocked, error
+                if (obj.type === 'token') appendToUI(obj.text);
+                else if (obj.type === 'meta') showRoutingBadge(obj);
+                else if (obj.type === 'done') markComplete(obj);
+                else if (obj.type === 'blocked') showBlocked(obj.message);
+            }
+        }
+    """
+    query = req.query
+
+    def event_stream():
+        full_response = ""
+        routing_meta  = {}
+
+        try:
+            for chunk in pipeline.process_query_stream(query):
+                # Track metadata + full response so we can log after the stream ends
+                if chunk.get("type") == "meta":
+                    routing_meta = chunk
+                elif chunk.get("type") == "done":
+                    full_response = chunk.get("full_response", "")
+
+                yield json.dumps(chunk) + "\n"
+
+            # Log after streaming completes successfully
+            if full_response and routing_meta:
+                try:
+                    log_query(
+                        question=query,
+                        model_response=full_response,
+                        domain=routing_meta.get("adapter_used", "general"),
+                    )
+                except Exception as e:
+                    print(f"[Log] Warning: failed to write query log — {e}")
+
+        except Exception as e:
+            # Final-chance error channel
+            yield json.dumps({"type": "error", "message": str(e)}) + "\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control":    "no-cache",
+            "X-Accel-Buffering": "no",   # disable nginx buffering if behind a proxy
+        },
+    )
+
+
 @app.post("/train", response_model=TrainResponse)
 async def train():
-    """
-    Trigger a full GRPO retraining cycle for all domain adapters.
-    Runs in a background thread and returns immediately.
-    Returns 409 if training is already in progress.
-    """
     global _training_active, _training_status
 
     with _training_lock:
@@ -230,7 +281,6 @@ async def train():
 
 @app.get("/train/status", response_model=TrainStatusResponse)
 async def train_status():
-    """Return the current training state (phase, domain, progress)."""
     with _training_lock:
         s = dict(_training_status)
     return TrainStatusResponse(**s)
@@ -238,7 +288,6 @@ async def train_status():
 
 @app.post("/train/stop", response_model=TrainResponse)
 async def train_stop():
-    """Send a stop signal to the running training loop."""
     with _training_lock:
         active = _training_active
     if not active:
@@ -246,8 +295,6 @@ async def train_stop():
     _stop_event.set()
     return TrainResponse(status="stopping", message="Stop signal sent — will halt after current step.")
 
-
-# ── Run ─────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     host = os.getenv("HOST", "0.0.0.0")
