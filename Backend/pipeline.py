@@ -349,19 +349,7 @@ def _setup_adapter_for_generation(routing_info: dict):
 
 
 def _postprocess_response(response: str, winning_domain: str | None) -> str:
-    if winning_domain == "code":
-        parts = response.split("#")
-        if len(parts) > 1:
-            response = "#".join(parts[:-1]).strip()
-        return response.rstrip()
-    else:
-        parts = response.split(".")
-        if len(parts) > 1:
-            response = ".".join(parts[:-1]).strip()
-        parts = response.split("\n")
-        if len(parts) > 1:
-            response = "\n".join(parts[:-1]).strip()
-        return response.rstrip()
+    return response.replace("<end_of_turn>", "").rstrip()
 
 
 # ==============================================================================
