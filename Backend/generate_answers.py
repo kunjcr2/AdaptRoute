@@ -6,18 +6,30 @@ Updates answers and removes timestamps.
 import json
 import re
 import sys
+import os
 from pathlib import Path
 
 # Add the current directory to path to import pipeline
 sys.path.insert(0, str(Path(__file__).parent))
 
+# Import pipeline utilities
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModelForSequenceClassification
+from peft import PeftModel
+
 # Import your pipeline - handle different possible import names
 try:
-    from pipeline_v4 import process_query
+    from pipeline_v4 import (
+        load_all_models, global_systems, FIREWALL_MODEL, BASE_MODEL, 
+        ADAPTER_REPOS, ADAPTERS_DIR, DEVICE, prepare
+    )
     print("✓ Using pipeline_v4.py")
 except ImportError:
     try:
-        from pipeline import process_query
+        from pipeline import (
+            load_all_models, global_systems, FIREWALL_MODEL, BASE_MODEL, 
+            ADAPTER_REPOS, ADAPTERS_DIR, DEVICE, prepare
+        )
         print("✓ Using pipeline.py")
     except ImportError:
         print("✗ Error: Could not find pipeline_v4.py or pipeline.py")
@@ -32,6 +44,153 @@ def fix_json_line(line):
     # Fix other common issues
     line = re.sub(r'\\([^"\\/bfnrtu])', r'\\\\\1', line)  # Escape invalid escapes
     return line
+
+
+def process_query_with_domain(query: str, domain: str) -> dict:
+    """
+    Process a query directly using the specified domain adapter.
+    Skips the gating network and routes directly to the domain's adapter.
+    
+    Args:
+        query (str): The question to process
+        domain (str): The domain to use (code, math, medical, etc)
+    
+    Returns:
+        dict: Result containing status and response
+    """
+    if any(m is None for m in global_systems.values()):
+        return {"status": "error", "message": "Models not loaded. Call load_all_models() first."}
+    
+    import time
+    t_start = time.time()
+    
+    # ──────────────────────────────────────────────────────────────
+    # 1. Firewall Check
+    # ──────────────────────────────────────────────────────────────
+    fw_tokenizer = global_systems["firewall_tokenizer"]
+    fw_model = global_systems["firewall_model"]
+    
+    fw_inputs = fw_tokenizer(
+        query, return_tensors="pt", truncation=True, max_length=512
+    ).to(fw_model.device)
+    
+    with torch.no_grad():
+        fw_outputs = fw_model(**fw_inputs)
+    
+    predicted_fw_class_id = fw_outputs.logits.argmax(dim=-1).item()
+    fw_label = fw_model.config.id2label.get(predicted_fw_class_id, "SAFE")
+    
+    if fw_label == "INJECTION":
+        return {
+            "status": "blocked",
+            "message": "Your query was flagged as a potential prompt injection attempt.",
+            "firewall_label": fw_label,
+        }
+    
+    # ──────────────────────────────────────────────────────────────
+    # 2. Direct Domain Routing (skip gating network)
+    # ──────────────────────────────────────────────────────────────
+    domain = domain.lower().strip()
+    valid_domains = list(ADAPTER_REPOS.keys())
+    
+    if domain not in valid_domains:
+        print(f"[Route] ⚠️  Domain '{domain}' not found, falling back to base model")
+        routing_mode = "base"
+        winning_domain = None
+    else:
+        routing_mode = "hard"
+        winning_domain = domain
+        print(f"[Route] DIRECT → {winning_domain} (based on domain field)")
+    
+    # ──────────────────────────────────────────────────────────────
+    # 3. Adapter Loading (if domain specified)
+    # ──────────────────────────────────────────────────────────────
+    base_model = global_systems["base_model"]
+    base_tokenizer = global_systems["base_tokenizer"]
+    
+    if routing_mode == "hard":
+        local_path = os.path.join(ADAPTERS_DIR, winning_domain)
+        adapter_source = local_path if os.path.exists(local_path) else ADAPTER_REPOS[winning_domain]
+        
+        if not isinstance(base_model, PeftModel):
+            base_model = PeftModel.from_pretrained(
+                base_model, adapter_source, adapter_name=winning_domain
+            )
+            global_systems["base_model"] = base_model
+        else:
+            if winning_domain not in base_model.peft_config:
+                base_model.load_adapter(adapter_source, adapter_name=winning_domain)
+            base_model.set_adapter(winning_domain)
+    
+    # ──────────────────────────────────────────────────────────────
+    # 4. Generation
+    # ──────────────────────────────────────────────────────────────
+    max_tokens_map = {"medical": 256, "code": 256, "math": 128}
+    max_new_tokens = max_tokens_map.get(winning_domain, 128) if winning_domain else 128
+    
+    formatted_prompt = (
+        f"<start_of_turn>user\n{query}<end_of_turn>\n"
+        f"<start_of_turn>model\n"
+    )
+    enc = base_tokenizer(formatted_prompt, return_tensors="pt").to(base_model.device)
+    
+    stop_tokens = [base_tokenizer.eos_token_id]
+    end_of_turn_id = base_tokenizer.convert_tokens_to_ids("<end_of_turn>")
+    if end_of_turn_id and end_of_turn_id != base_tokenizer.unk_token_id:
+        stop_tokens.append(end_of_turn_id)
+    
+    ngram_size = 5 if winning_domain == "math" else 3
+    
+    if routing_mode == "hard":
+        base_model.set_adapter(winning_domain)
+        base_model.merge_adapter()
+    
+    with torch.inference_mode():
+        out = base_model.generate(
+            **enc,
+            max_new_tokens=max_new_tokens,
+            do_sample=False,
+            use_cache=True,
+            no_repeat_ngram_size=ngram_size,
+            pad_token_id=base_tokenizer.pad_token_id,
+            eos_token_id=stop_tokens,
+        )
+    
+    if routing_mode == "hard":
+        base_model.unmerge_adapter()
+    
+    # ──────────────────────────────────────────────────────────────
+    # 5. Decode + Post-process
+    # ──────────────────────────────────────────────────────────────
+    response = base_tokenizer.decode(
+        out[0][enc["input_ids"].shape[1]:],
+        skip_special_tokens=True,
+    ).strip()
+    
+    if winning_domain == "code":
+        parts = response.split("#")
+        if len(parts) > 1:
+            response = "#".join(parts[:-1]).strip()
+        response = response.rstrip()
+    else:
+        parts = response.split(".")
+        if len(parts) > 1:
+            response = ".".join(parts[:-1]).strip()
+        parts = response.split("\n")
+        if len(parts) > 1:
+            response = "\n".join(parts[:-1]).strip()
+        response = response.rstrip()
+    
+    t_total = time.time() - t_start
+    
+    return {
+        "status": "success",
+        "response": response,
+        "adapter_used": winning_domain if winning_domain else "base_model",
+        "routing_mode": routing_mode,
+        "firewall_label": fw_label,
+        "time_seconds": round(t_total, 2),
+    }
 
 
 def validate_record(record):
@@ -71,7 +230,7 @@ def generate_answers_for_query_log(input_file="query_log.jsonl", output_file="qu
     # Read all records from the JSONL file
     print(f"\n📖 Reading {input_file}...")
     try:
-        with open(input_file, 'r', encoding='utf-8') as f:
+        with open(f"./{input_file}", 'r', encoding='utf-8') as f:
             for line_num, line in enumerate(f, 1):
                 if line.strip():
                     # Try to parse JSON
@@ -100,13 +259,22 @@ def generate_answers_for_query_log(input_file="query_log.jsonl", output_file="qu
         print("✗ No valid records found in file")
         return
     
+    # Load models once before processing
+    print("\n🔧 Loading models...")
+    try:
+        load_all_models()
+        print("✓ All models loaded")
+    except Exception as e:
+        print(f"✗ Error loading models: {e}")
+        return
+    
     # Limit questions if specified
     if max_questions and max_questions < len(records):
         print(f"\n⚠️  Limiting to first {max_questions} questions (of {len(records)})")
         records = records[:max_questions]
     
     # Process each record
-    print(f"\n🤖 Generating answers for {len(records)} questions...")
+    print(f"\n🤖 Generating answers for {len(records)} questions using domain-based routing...")
     print("-" * 60)
     
     updated_records = []
@@ -135,10 +303,10 @@ def generate_answers_for_query_log(input_file="query_log.jsonl", output_file="qu
             continue
         
         try:
-            print(f"  [{idx}/{len(records)}] Processing: {question[:60]}...")
+            print(f"  [{idx}/{len(records)}] Domain: {domain} | {question[:50]}...")
             
-            # Call the pipeline to generate answer
-            result = process_query(question)
+            # Call the pipeline with direct domain routing (bypass gating network)
+            result = process_query_with_domain(question, domain)
             
             if result.get("status") == "success":
                 generated_answer = result.get("response", "")
@@ -149,12 +317,6 @@ def generate_answers_for_query_log(input_file="query_log.jsonl", output_file="qu
                     "answer": generated_answer,
                     "domain": domain,
                 }
-                
-                # Optional: Add metadata if available
-                if "routing_mode" in result:
-                    updated_record["routing_mode"] = result["routing_mode"]
-                if "adapter_used" in result:
-                    updated_record["adapter_used"] = result["adapter_used"]
                 
                 updated_records.append(updated_record)
                 success_count += 1
