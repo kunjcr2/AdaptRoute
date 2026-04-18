@@ -99,6 +99,17 @@ const Demo = () => {
         () => chats.find((c) => c.id === activeId) || null,
         [chats, activeId]
     );
+    // Latest assistant message in active chat that has routing metadata
+    const latestRouting = useMemo(() => {
+        if (!activeChat) return null;
+        for (let i = activeChat.messages.length - 1; i >= 0; i--) {
+            const m = activeChat.messages[i];
+            if (m.role === 'assistant' && m.gatingScores && !m.blocked) {
+                return m;
+            }
+        }
+        return null;
+    }, [activeChat]);
 
     // Auto-scroll to bottom on new message/token
     useEffect(() => {
@@ -300,6 +311,57 @@ const Demo = () => {
                         />
                     ))}
                 </div>
+
+                {/* Sidebar routing panel — latest assistant message's gating info */}
+                {latestRouting && (
+                    <div className="border-t border-brand-100 p-4 space-y-3 bg-brand-50/40">
+                        <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-brand-500">
+                                Last Route
+                            </span>
+                            {latestRouting.routingMode && (
+                                <span className={`inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded ${latestRouting.routingMode === 'hard' ? 'bg-amber-100 text-amber-700' :
+                                    latestRouting.routingMode === 'blend' ? 'bg-purple-100 text-purple-700' :
+                                        'bg-gray-100 text-gray-600'
+                                    }`}>
+                                    {latestRouting.routingMode}
+                                </span>
+                            )}
+                        </div>
+
+                        {/* Adapter chosen */}
+                        <div>
+                            {latestRouting.adapter === 'base_model' ? (
+                                <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-0.5 rounded-full border bg-gray-100 text-gray-800 border-gray-200">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60" />
+                                    base model
+                                </span>
+                            ) : (
+                                <AdapterBadge domain={latestRouting.adapter} />
+                            )}
+                        </div>
+
+                        {/* Compact gating bars */}
+                        {latestRouting.gatingScores && (
+                            <div className="space-y-1.5">
+                                {Object.entries(latestRouting.gatingScores).map(([domain, score]) => (
+                                    <SidebarGatingBar
+                                        key={domain}
+                                        domain={domain}
+                                        score={score}
+                                        isWinner={domain === latestRouting.adapter}
+                                    />
+                                ))}
+                            </div>
+                        )}
+
+                        {latestRouting.confidence != null && (
+                            <div className="text-[10px] font-mono text-brand-400 text-right">
+                                conf: {(latestRouting.confidence * 100).toFixed(2)}%
+                            </div>
+                        )}
+                    </div>
+                )}
             </aside>
 
             {/* Main chat area */}
@@ -517,11 +579,6 @@ const Message = ({ message }) => {
                         )}
                     </div>
                 )}
-                {!isUser && !message.blocked && message.gatingScores && (
-                    <div className="mt-3">
-                        <GatingBadge scores={message.gatingScores} winner={message.adapter} />
-                    </div>
-                )}
             </div>
             {isUser && (
                 <div className="shrink-0 w-8 h-8 rounded-full bg-brand-200 text-brand-800 flex items-center justify-center">
@@ -575,6 +632,35 @@ const GatingScoreBar = ({ domain, score, isWinner }) => {
                 </div>
             </div>
             <div className="w-16 text-right text-brand-700 font-semibold">{(score * 100).toFixed(2)}</div>
+        </div>
+    );
+};
+
+const SidebarGatingBar = ({ domain, score, isWinner }) => {
+    const colors = {
+        code: 'bg-blue-400',
+        math: 'bg-purple-400',
+        qa: 'bg-green-400',
+        medical: 'bg-rose-400',
+    };
+    const barColor = colors[domain] || 'bg-brand-400';
+    const barWidth = `${Math.max(2, Math.round(score * 100))}%`;
+
+    return (
+        <div className="flex items-center gap-2 text-[11px]">
+            <div className="w-14 text-brand-700 flex items-center gap-1">
+                {isWinner && <span className="text-yellow-500">★</span>}
+                <span className="font-semibold capitalize truncate">{domain}</span>
+            </div>
+            <div className="flex-1 h-1.5 bg-brand-100 rounded-full overflow-hidden">
+                <div
+                    className={`h-full ${barColor} transition-all duration-500`}
+                    style={{ width: barWidth }}
+                />
+            </div>
+            <div className="w-10 text-right text-brand-600 font-mono tabular-nums text-[10px]">
+                {(score * 100).toFixed(1)}%
+            </div>
         </div>
     );
 };
