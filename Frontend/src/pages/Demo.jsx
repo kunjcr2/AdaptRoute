@@ -3,9 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     Send, Plus, Trash2, MessageSquare, Copy, RefreshCw,
     Loader2, Cpu, ShieldAlert, AlertTriangle, User, Sparkles, Check,
-    Database, Zap, Square, CheckCircle2,
 } from 'lucide-react';
-import { streamQuery, checkHealth, getWorkerUrl, getStats, getTrainStatus, startTraining, stopTraining } from '../lib/adaptroute';
+import { streamQuery, checkHealth, getWorkerUrl, getStats } from '../lib/adaptroute';
 
 const STORAGE_KEY = 'adaptroute-chats-v1';
 
@@ -50,9 +49,6 @@ const Demo = () => {
     const [error, setError] = useState(null);
     const [workerStatus, setWorkerStatus] = useState('checking');
     const [queryCount, setQueryCount] = useState(null);
-    const [trainStatus, setTrainStatus] = useState({ active: false, phase: 'idle', current_domain: null, domains_done: [] });
-    const [trainLoading, setTrainLoading] = useState(false);
-    const prevTrainActive = useRef(false);
     const messagesEndRef = useRef(null);
 
     // Load chats + health check on mount
@@ -91,46 +87,6 @@ const Demo = () => {
     }, []);
 
     useEffect(() => { refreshStats(); }, [refreshStats]);
-
-    // Poll train status — fast when training, slow otherwise
-    useEffect(() => {
-        let cancelled = false;
-        const poll = async () => {
-            try {
-                const s = await getTrainStatus();
-                if (cancelled) return;
-                setTrainStatus(s);
-                if (prevTrainActive.current && !s.active) refreshStats();
-                prevTrainActive.current = s.active;
-            } catch { }
-        };
-        poll();
-        const interval = setInterval(poll, trainStatus.active ? 2000 : 12000);
-        return () => { cancelled = true; clearInterval(interval); };
-    }, [trainStatus.active, refreshStats]);
-
-    const handleTrain = async () => {
-        setTrainLoading(true);
-        try {
-            await startTraining();
-            setTrainStatus((s) => ({ ...s, active: true, phase: 'loading', current_domain: null, domains_done: [] }));
-        } catch (e) {
-            setError(e.message || 'Failed to start training.');
-        } finally {
-            setTrainLoading(false);
-        }
-    };
-
-    const handleStop = async () => {
-        setTrainLoading(true);
-        try {
-            await stopTraining();
-        } catch (e) {
-            setError(e.message || 'Failed to stop training.');
-        } finally {
-            setTrainLoading(false);
-        }
-    };
 
     // Persist chats
     useEffect(() => {
@@ -342,14 +298,6 @@ const Demo = () => {
                         />
                     ))}
                 </div>
-                <TrainingPanel
-                    queryCount={queryCount}
-                    trainStatus={trainStatus}
-                    workerStatus={workerStatus}
-                    onTrain={handleTrain}
-                    onStop={handleStop}
-                    trainLoading={trainLoading}
-                />
             </aside>
 
             {/* Main chat area */}
@@ -421,104 +369,6 @@ const Demo = () => {
                     </div>
                 </div>
             </main>
-        </div>
-    );
-};
-
-// ── Training panel ──────────────────────────────────────────────────────────
-const DOMAINS = ['code', 'math', 'medical'];
-
-const PHASE_LABEL = {
-    idle: 'Ready to train',
-    loading: 'Loading query logs…',
-    scoring: 'Scoring responses…',
-    training: null,
-    complete: 'Complete!',
-    stopped: 'Stopped',
-};
-
-const TrainingPanel = ({ queryCount, trainStatus, workerStatus, onTrain, onStop, trainLoading }) => {
-    const isTraining = trainStatus?.active;
-    const phase = trainStatus?.phase || 'idle';
-    const currentDomain = trainStatus?.current_domain;
-    const domainsDone = trainStatus?.domains_done || [];
-
-    const phaseLabel = phase === 'training' && currentDomain
-        ? `Training ${currentDomain} adapter…`
-        : (PHASE_LABEL[phase] ?? phase);
-
-    return (
-        <div className="border-t border-brand-100 p-4 space-y-3">
-            <div className="flex items-center justify-between text-xs text-brand-500">
-                <span className="flex items-center gap-1.5">
-                    <span className={`w-2 h-2 rounded-full ${workerStatus === 'online' ? 'bg-green-500 animate-pulse' :
-                        workerStatus === 'offline' ? 'bg-red-500' : 'bg-yellow-500 animate-pulse'
-                        }`} />
-                    Worker {workerStatus}
-                </span>
-                <span className="flex items-center gap-1 text-brand-400">
-                    <Database className="w-3 h-3" />
-                    {queryCount === null ? '—' : queryCount} logged
-                </span>
-            </div>
-
-            <AnimatePresence>
-                {isTraining && (
-                    <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        exit={{ opacity: 0, height: 0 }}
-                        className="rounded-xl bg-amber-50 border border-amber-200 p-3 space-y-2.5 overflow-hidden"
-                    >
-                        <div className="flex items-center gap-2 text-xs font-semibold text-amber-800">
-                            <Loader2 className="w-3 h-3 animate-spin shrink-0" />
-                            <span>{phaseLabel}</span>
-                        </div>
-                        <div className="flex gap-1.5">
-                            {DOMAINS.map((d) => {
-                                const done = domainsDone.includes(d);
-                                const active = d === currentDomain;
-                                return (
-                                    <div
-                                        key={d}
-                                        className={`flex-1 flex items-center justify-center gap-1 rounded-lg py-1.5 text-[10px] font-bold transition-all duration-300 ${done ? 'bg-green-100 text-green-700' :
-                                            active ? 'bg-amber-200 text-amber-900 animate-pulse' :
-                                                'bg-brand-100 text-brand-400'
-                                            }`}
-                                    >
-                                        {done && <CheckCircle2 className="w-3 h-3" />}
-                                        {active && <Loader2 className="w-3 h-3 animate-spin" />}
-                                        <span className="capitalize">{d}</span>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
-
-            {isTraining ? (
-                <button
-                    onClick={onStop}
-                    disabled={trainLoading}
-                    className="w-full flex items-center justify-center gap-2 bg-red-600 text-white px-4 py-2 rounded-full text-xs font-semibold hover:bg-red-700 active:scale-95 transition-all disabled:opacity-50"
-                >
-                    <Square className="w-3 h-3" />
-                    Stop Training
-                </button>
-            ) : (
-                <button
-                    onClick={onTrain}
-                    disabled={trainLoading || workerStatus !== 'online'}
-                    className="w-full flex items-center justify-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-full text-xs font-semibold hover:bg-emerald-700 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                    {trainLoading
-                        ? <Loader2 className="w-3 h-3 animate-spin" />
-                        : <Zap className="w-3 h-3" />
-                    }
-                    Train Adapters
-                </button>
-            )}
         </div>
     );
 };

@@ -61,35 +61,6 @@ export async function getStats() {
   return res.json();
 }
 
-export async function getTrainStatus() {
-  const res = await fetch(`${WORKER_URL}/train/status`, {
-    headers: defaultHeaders,
-  });
-  if (!res.ok) throw new Error(`Train status failed: ${res.status}`);
-  return res.json();
-}
-
-export async function startTraining() {
-  const res = await fetch(`${WORKER_URL}/train`, {
-    method: "POST",
-    headers: defaultHeaders,
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || `Train failed: ${res.status}`);
-  }
-  return res.json();
-}
-
-export async function stopTraining() {
-  const res = await fetch(`${WORKER_URL}/train/stop`, {
-    method: "POST",
-    headers: defaultHeaders,
-  });
-  if (!res.ok) throw new Error(`Stop failed: ${res.status}`);
-  return res.json();
-}
-
 /**
  * Stream a query response token-by-token.
  * Callbacks:
