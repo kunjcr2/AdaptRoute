@@ -193,7 +193,7 @@ const Demo = () => {
                 onDone: (info) => {
                     patchLastAssistant((last) => ({
                         ...last,
-                        content: info.full_response ?? last.content,
+                        // content: info.full_response ?? last.content,
                         seconds: info.time_seconds,
                         streaming: false,
                     }));
