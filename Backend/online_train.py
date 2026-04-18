@@ -274,33 +274,20 @@ def fmt_prompt(question: str) -> str:
 
 
 def retrain_adapter(domain: str, domain_records: list[dict]):
-    """
-    Pull the existing adapter from HuggingFace, run GRPO using scored logs,
-    push the improved adapter back.
-    """
+    """CONTINUOUSLY UPDATE existing adapter - NOT create new one"""
+    
     print(f"\n{'='*60}")
-    print(f"GRPO Retraining — {domain.upper()} adapter")
-    print(f"Samples: {len(domain_records)}")
+    print(f"CONTINUOUS TRAINING - {domain.upper()} adapter")
     print(f"{'='*60}")
-
-    wandb.init(
-        project="adaptroute-continual",
-        name=f"grpo-retrain-{domain}-{int(time.time())}",
-        config={
-            "domain":    domain,
-            "n_samples": len(domain_records),
-            "adapter":   ADAPTER_REPOS[domain],
-        },
-        reinit=True,
-    )
-
-    # ── Load tokenizer + base model ──────────────────────────────
+    
+    # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(
         BASE_MODEL_ID, token=HF_TOKEN if HF_TOKEN else None
     )
-    tokenizer.pad_token    = tokenizer.eos_token
-    tokenizer.padding_side = "left"   # required by GRPOTrainer
-
+    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "left"
+    
+    # Load base model
     base_model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL_ID,
         torch_dtype=torch.bfloat16,
@@ -308,76 +295,75 @@ def retrain_adapter(domain: str, domain_records: list[dict]):
         attn_implementation="sdpa",
         token=HF_TOKEN if HF_TOKEN else None,
     )
-
-    # ── Load existing adapter on top of base ────────────────────
+    
+    # ✅ CRITICAL: Load EXISTING adapter first
     print(f"[{domain}] Loading existing adapter from {ADAPTER_REPOS[domain]} ...")
     model = PeftModel.from_pretrained(
         base_model,
         ADAPTER_REPOS[domain],
         adapter_name=domain,
-        is_trainable=True,
+        is_trainable=True,  # Make it trainable for continued learning
         token=HF_TOKEN if HF_TOKEN else None,
     )
+    
+    # Verify we're continuing training
+    print(f"[{domain}] Existing adapter loaded. Trainable params:")
     model.print_trainable_parameters()
-
-    # ── Build GRPO dataset ───────────────────────────────────────
-    # GRPOTrainer expects a "prompt" column (list of chat messages)
-    # We also pass "reference" so grpo_reward_fn can access it via **kwargs
-    prompts    = []
+    
+    # Build dataset
+    prompts = []
     references = []
     for rec in domain_records:
-        prompts.append([
-            {"role": "user", "content": rec["question"]}
-        ])
+        prompts.append([{"role": "user", "content": rec["question"]}])
         references.append(rec["answer"])
-
+    
     grpo_dataset = Dataset.from_dict({
-        "prompt":    prompts,
+        "prompt": prompts,
         "reference": references,
     })
-
-    # ── GRPOConfig ───────────────────────────────────────────────
+    
+    # GRPO Config - LOWER learning rate for continued training
     grpo_cfg = GRPOConfig(
         output_dir=str(OUTPUT_DIR / f"grpo-{domain}"),
         num_train_epochs=1,
         per_device_train_batch_size=2,
-        gradient_accumulation_steps=4,      # effective batch = 8
-        learning_rate=5e-6,
+        gradient_accumulation_steps=4,
+        learning_rate=1e-6,  # ← LOWER for continued training (was 5e-6)
         bf16=True,
         tf32=True,
         logging_steps=LOG_STEPS,
         save_steps=500,
         report_to="wandb",
-        # max_prompt_length=256,
         max_completion_length=256,
-        num_generations=4,                  # completions per prompt for GRPO group
+        num_generations=4,
         temperature=0.9,
-        beta=0.0,                           # no KL penalty
+        beta=0.0,
         seed=SEED,
-        remove_unused_columns=False,        # keep "reference" column for reward fn
+        remove_unused_columns=False,
     )
-
+    
+    # ✅ CRITICAL: Pass model with existing adapter, NO peft_config!
     trainer = GRPOTrainer(
-        model=base_model,           # plain base model, not PeftModel
+        model=model,  # ← Model already has the LoRA adapter
         reward_funcs=grpo_reward_fn,
         args=grpo_cfg,
         train_dataset=grpo_dataset,
         processing_class=tokenizer,
-        peft_config=GRPO_LORA,      # GRPOTrainer wraps it internally
+        # NO peft_config here! The model already has LoRA
     )
+    
+    # This CONTINUES training the existing adapter
     trainer.train()
-
-    # ── Push improved adapter to HuggingFace ────────────────────
-    repo = ADAPTER_REPOS[domain]
-    print(f"[{domain}] Pushing improved adapter → {repo}")
-    trainer.model.push_to_hub(repo, token=HF_TOKEN)
-    tokenizer.push_to_hub(repo, token=HF_TOKEN)
-
+    
+    # Push UPDATED adapter back
+    print(f"[{domain}] Pushing CONTINUOUSLY TRAINED adapter → {ADAPTER_REPOS[domain]}")
+    trainer.model.push_to_hub(ADAPTER_REPOS[domain], token=HF_TOKEN)
+    tokenizer.push_to_hub(ADAPTER_REPOS[domain], token=HF_TOKEN)
+    
     wandb.finish()
     del model, base_model, trainer
     gc.collect()
     torch.cuda.empty_cache() if torch.cuda.is_available() else None
-    print(f"[{domain}] Retraining complete.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
