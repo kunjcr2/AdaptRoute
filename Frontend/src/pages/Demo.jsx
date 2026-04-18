@@ -5,6 +5,8 @@ import {
     Loader2, Cpu, ShieldAlert, AlertTriangle, User, Sparkles, Check,
 } from 'lucide-react';
 import { streamQuery, checkHealth, getWorkerUrl, getStats } from '../lib/adaptroute';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 const STORAGE_KEY = 'adaptroute-chats-v1';
 
@@ -416,7 +418,6 @@ const Message = ({ message }) => {
             setTimeout(() => setCopied(false), 1500);
         });
     };
-
     return (
         <motion.div
             initial={{ opacity: 0, y: 8 }}
@@ -429,8 +430,69 @@ const Message = ({ message }) => {
                 </div>
             )}
             <div className={`max-w-[75%] ${isUser ? 'order-1' : ''}`}>
+                {/* Blocked indicator stays above bubble */}
+                {message.blocked && (
+                    <div className="mb-3">
+                        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-red-100 border border-red-300">
+                            <ShieldAlert className="w-4 h-4 text-red-600" />
+                            <span className="text-xs font-semibold text-red-700">Blocked by Firewall</span>
+                        </div>
+                    </div>
+                )}
+
+                {/* Bubble — now with markdown */}
+                <div
+                    className={`rounded-2xl px-5 py-3 text-sm leading-relaxed ${isUser
+                        ? 'bg-brand-900 text-white whitespace-pre-wrap'
+                        : message.blocked
+                            ? 'bg-red-50 border border-red-200 text-red-900 whitespace-pre-wrap'
+                            : message.error
+                                ? 'bg-yellow-50 border border-yellow-200 text-yellow-900 whitespace-pre-wrap'
+                                : 'bg-white border border-brand-100 text-brand-900 shadow-sm'
+                        }`}
+                >
+                    {message.blocked && <ShieldAlert className="w-4 h-4 inline mr-2 -mt-0.5" />}
+                    {message.content ? (
+                        <>
+                            {isUser || message.blocked || message.error ? (
+                                message.content
+                            ) : (
+                                <div className="markdown-body">
+                                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                        {message.content}
+                                    </ReactMarkdown>
+                                </div>
+                            )}
+                            {message.streaming && (
+                                <span className="inline-block w-1.5 h-4 bg-brand-400 ml-0.5 align-middle animate-pulse" />
+                            )}
+                        </>
+                    ) : (
+                        <span className="inline-flex items-center gap-2 text-brand-400">
+                            <Loader2 className="w-3 h-3 animate-spin" /> generating…
+                        </span>
+                    )}
+                </div>
+
+                {/* Footer: copy button + timing */}
+                {!isUser && message.content && !message.streaming && (
+                    <div className="flex items-center gap-3 mt-2 text-xs text-brand-500">
+                        <button
+                            onClick={copy}
+                            className="flex items-center gap-1 hover:text-brand-800 transition"
+                        >
+                            {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                            {copied ? 'Copied' : 'Copy'}
+                        </button>
+                        {message.seconds != null && (
+                            <span className="opacity-60">{message.seconds}s</span>
+                        )}
+                    </div>
+                )}
+
+                {/* ROUTING BADGES — moved below the bubble */}
                 {!isUser && !message.blocked && message.adapter && (
-                    <div className="mb-3 flex flex-wrap gap-2 items-center">
+                    <div className="mt-3 flex flex-wrap gap-2 items-center">
                         {message.routingMode && (
                             <span className={`inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded ${message.routingMode === 'hard' ? 'bg-amber-100 text-amber-700' :
                                 message.routingMode === 'blend' ? 'bg-purple-100 text-purple-700' :
@@ -456,59 +518,8 @@ const Message = ({ message }) => {
                     </div>
                 )}
                 {!isUser && !message.blocked && message.gatingScores && (
-                    <div className="mb-3">
+                    <div className="mt-3">
                         <GatingBadge scores={message.gatingScores} winner={message.adapter} />
-                    </div>
-                )}
-
-                {message.blocked && (
-                    <div className="mb-3">
-                        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-red-100 border border-red-300">
-                            <ShieldAlert className="w-4 h-4 text-red-600" />
-                            <span className="text-xs font-semibold text-red-700">Blocked by Firewall</span>
-                        </div>
-                    </div>
-                )}
-
-                {/* Bubble */}
-                <div
-                    className={`rounded-2xl px-5 py-3 text-sm leading-relaxed whitespace-pre-wrap ${isUser
-                        ? 'bg-brand-900 text-white'
-                        : message.blocked
-                            ? 'bg-red-50 border border-red-200 text-red-900'
-                            : message.error
-                                ? 'bg-yellow-50 border border-yellow-200 text-yellow-900'
-                                : 'bg-white border border-brand-100 text-brand-900 shadow-sm'
-                        }`}
-                >
-                    {message.blocked && <ShieldAlert className="w-4 h-4 inline mr-2 -mt-0.5" />}
-                    {message.content ? (
-                        <>
-                            {message.content}
-                            {/* Blinking cursor while streaming tokens in */}
-                            {message.streaming && (
-                                <span className="inline-block w-1.5 h-4 bg-brand-400 ml-0.5 align-middle animate-pulse" />
-                            )}
-                        </>
-                    ) : (
-                        <span className="inline-flex items-center gap-2 text-brand-400">
-                            <Loader2 className="w-3 h-3 animate-spin" /> generating…
-                        </span>
-                    )}
-                </div>
-
-                {!isUser && message.content && !message.streaming && (
-                    <div className="flex items-center gap-3 mt-2 text-xs text-brand-500">
-                        <button
-                            onClick={copy}
-                            className="flex items-center gap-1 hover:text-brand-800 transition"
-                        >
-                            {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                            {copied ? 'Copied' : 'Copy'}
-                        </button>
-                        {message.seconds != null && (
-                            <span className="opacity-60">{message.seconds}s</span>
-                        )}
                     </div>
                 )}
             </div>
@@ -519,7 +530,8 @@ const Message = ({ message }) => {
             )}
         </motion.div>
     );
-};
+
+}
 
 // ── Badges ──────────────────────────────────────────────────────────────────
 const AdapterBadge = ({ domain }) => {
