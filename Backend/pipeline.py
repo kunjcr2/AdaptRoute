@@ -394,6 +394,7 @@ def process_query(query: str) -> dict:
         try:
             max_tokens_map = {"medical": 256, "code": 256, "math": 128}
             max_new_tokens = max_tokens_map.get(winning_domain, 128) if winning_domain else 128
+            max_new_tokens = 2048
 
             formatted_prompt = (
                 f"<start_of_turn>user\n{query}<end_of_turn>\n"
