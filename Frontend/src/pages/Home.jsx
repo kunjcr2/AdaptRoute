@@ -56,7 +56,7 @@ const Home = () => {
               {
                 icon: <Cpu className="w-6 h-6" />,
                 title: "Edge-First Design",
-                desc: "One frozen base model, multiple lightweight LoRA adapters (~40MB each). Fits easily on mid-range mobile devices with no cloud dependency.",
+                desc: "One frozen base model, multiple lightweight LoRA adapters (~30MB each). Fits easily on mid-range devices with no cloud dependency.",
                 link: "/architecture"
               },
               {

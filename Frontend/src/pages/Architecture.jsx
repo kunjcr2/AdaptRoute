@@ -57,9 +57,25 @@ const Architecture = () => {
             <p className="text-brand-600 text-sm mb-6">66M parameters • ~5ms cpu inference</p>
 
             <div className="flex justify-center gap-3 mb-6">
-              {['p(code)', 'p(math)', 'p(QA)', 'p(medical)'].map(t => (
+              {['p(code)', 'p(math)', 'p(medical)', 'p(general)'].map(t => (
                 <span key={t} className="bg-brand-50 text-brand-700 font-mono text-xs px-3 py-1.5 rounded-lg border border-brand-100">{t}</span>
               ))}
+            </div>
+
+            {/* Threshold Indicators */}
+            <div className="flex justify-around items-center border-t border-brand-100 pt-6 mt-2 relative">
+              <div className="flex flex-col items-center gap-1">
+                <div className="text-[10px] font-bold text-amber-600 uppercase">Hard Route</div>
+                <div className="text-xs font-mono text-brand-800 font-bold border-b-2 border-amber-400">&gt; 0.85</div>
+              </div>
+              <div className="flex flex-col items-center gap-1">
+                <div className="text-[10px] font-bold text-purple-600 uppercase">Soft Blend</div>
+                <div className="text-xs font-mono text-brand-800 font-bold border-b-2 border-purple-400">0.60 - 0.85</div>
+              </div>
+              <div className="flex flex-col items-center gap-1">
+                <div className="text-[10px] font-bold text-gray-500 uppercase">Base Only</div>
+                <div className="text-xs font-mono text-brand-800 font-bold border-b-2 border-gray-300">&lt; 0.60</div>
+              </div>
             </div>
           </div>
 
@@ -68,7 +84,7 @@ const Architecture = () => {
           {/* Merge */}
           <div className="bg-gradient-to-r from-brand-50 via-white to-brand-50 border border-brand-200 w-full p-6 rounded-2xl text-center shadow-inner flex flex-col items-center gap-3">
             <GitMerge className="w-6 h-6 text-brand-600" />
-            <span className="font-mono text-brand-800 font-medium">Soft Merge: add_weighted_adapter(adapters, weights)</span>
+            <span className="font-mono text-brand-800 font-medium">Soft Blend: weight_a * delta_a + weight_b * delta_b</span>
           </div>
 
           <div className="h-10 w-px bg-brand-300"></div>
@@ -77,9 +93,9 @@ const Architecture = () => {
           <div className="bg-brand-800 text-white w-full p-8 rounded-3xl text-center shadow-xl relative overflow-hidden">
             <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10"></div>
             <div className="relative z-10">
-              <div className="font-bold text-2xl mb-2">Base SLM (Qwen2.5-1.5B)</div>
+              <div className="font-bold text-2xl mb-2">Base SLM (Gemma-3-1B-It)</div>
               <div className="text-brand-200 font-medium bg-white/10 inline-block px-4 py-1.5 rounded-full mt-2">
-                + Merged LoRA Experts
+                + Blended LoRA Experts
               </div>
             </div>
           </div>
@@ -106,17 +122,16 @@ is_clean = firewall_model(query)
 if not is_clean:
     return "Query blocked"
 
-# 2. Gate outputs probabilities
 probs = gate_model(query)
 
-top_adapters = ["lora-code", "lora-math"]
-top_weights  = [0.72, 0.21]
-
-model.add_weighted_adapter(
-    adapters=top_adapters,
-    weights=top_weights,
-    adapter_name="merged"
-)
+# 3. Routing Logic
+top1_prob = probs.max()
+if top1_prob > 0.85:
+    routing_mode = "hard"
+elif top1_prob > 0.60:
+    routing_mode = "blend" # interpolate top-2 deltas
+else:
+    routing_mode = "base"
 
 response = model.generate(query)`}</pre>
           </div>
@@ -151,8 +166,8 @@ response = model.generate(query)`}</pre>
             </div>
             <div className="space-y-4 text-sm text-brand-600">
               <div>
-                <p className="font-semibold text-brand-800 mb-1">⭐ Consumer T4 (16GB)</p>
-                <p className="text-xs">~2-3 sec/query • Google Colab default</p>
+                <p className="font-semibold text-brand-800 mb-1">⭐ Consumer T4 / L4</p>
+                <p className="text-xs">~1.5-2.5 sec/query • Google Colab default</p>
               </div>
               <div>
                 <p className="font-semibold text-brand-800 mb-1">NVIDIA RTX Series</p>
@@ -226,8 +241,8 @@ response = model.generate(query)`}</pre>
           <div className="grid md:grid-cols-2 gap-8">
             <div className="space-y-3">
               <div className="flex justify-between items-center text-sm">
-                <span className="text-brand-600">Base Model (Qwen 1.5B @ 4-bit):</span>
-                <span className="font-semibold text-brand-900">~4 GB</span>
+                <span className="text-brand-600">Base Model (Gemma-3-1B-It @ bf16):</span>
+                <span className="font-semibold text-brand-900">~2.2 GB</span>
               </div>
               <div className="flex justify-between items-center text-sm border-t border-brand-200 pt-3">
                 <span className="text-brand-600">Firewall (DeBERTa-v3):</span>
@@ -240,8 +255,8 @@ response = model.generate(query)`}</pre>
             </div>
             <div className="space-y-3">
               <div className="flex justify-between items-center text-sm">
-                <span className="text-brand-600">All 4 Adapters:</span>
-                <span className="font-semibold text-brand-900">~200 MB</span>
+                <span className="text-brand-600">All Adapters (delta cache):</span>
+                <span className="font-semibold text-brand-900">~150 MB</span>
               </div>
               <div className="flex justify-between items-center text-sm border-t border-brand-200 pt-3">
                 <span className="text-brand-600">Inference Headroom:</span>
@@ -249,7 +264,7 @@ response = model.generate(query)`}</pre>
               </div>
               <div className="flex justify-between items-center text-sm font-bold border-t-2 border-brand-400 pt-3 mt-3">
                 <span className="text-brand-900">Total VRAM Required:</span>
-                <span className="text-brand-700">~8 GB (min)</span>
+                <span className="text-brand-700">~6 GB (min)</span>
               </div>
             </div>
           </div>

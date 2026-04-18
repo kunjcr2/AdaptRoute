@@ -161,6 +161,8 @@ const Demo = () => {
                         ...last,
                         content: result.response,
                         adapter: result.adapter_used,
+                        routingMode: result.routing_mode,
+                        confidence: result.gating_confidence,
                         gatingScores: result.gating_scores,
                         firewallLabel: result.firewall_label,
                         seconds: result.time_seconds,
@@ -267,7 +269,7 @@ const Demo = () => {
                         <h1 className="font-serif text-xl font-bold text-brand-900">
                             {activeChat?.title || 'Chat'}
                         </h1>
-                        <p className="text-xs text-brand-500">AdaptRoute · Qwen2.5-1.5B + dynamic LoRA routing</p>
+                        <p className="text-xs text-brand-500">AdaptRoute · Gemma-3-1B-It + dynamic LoRA routing</p>
                     </div>
                     {canRegenerate && (
                         <button
@@ -411,20 +413,35 @@ const Message = ({ message }) => {
             <div className={`max-w-[75%] ${isUser ? 'order-1' : ''}`}>
                 {/* Adapter + gating scores */}
                 {!isUser && !message.blocked && message.adapter && (
-                    <div className="mb-3 space-y-2">
+                    <div className="mb-3 flex flex-wrap gap-2 items-center">
+                        {message.routingMode && (
+                            <span className={`inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded ${
+                                message.routingMode === 'hard' ? 'bg-amber-100 text-amber-700' :
+                                message.routingMode === 'blend' ? 'bg-purple-100 text-purple-700' :
+                                'bg-gray-100 text-gray-600'
+                            }`}>
+                                {message.routingMode} route
+                            </span>
+                        )}
+                        {message.confidence != null && (
+                            <span className="text-[10px] font-mono text-brand-400">
+                                conf: {(message.confidence * 100).toFixed(1)}%
+                            </span>
+                        )}
+                        <div className="w-full h-0" /> {/* break */}
                         {message.adapter === 'base_model' ? (
                             <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-0.5 rounded-full border bg-gray-100 text-gray-800 border-gray-200">
                                 <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60" />
                                 base model chosen
                             </span>
                         ) : (
-                            <>
-                                <AdapterBadge domain={message.adapter} />
-                                {message.gatingScores && (
-                                    <GatingBadge scores={message.gatingScores} winner={message.adapter} />
-                                )}
-                            </>
+                            <AdapterBadge domain={message.adapter} />
                         )}
+                    </div>
+                )}
+                {!isUser && !message.blocked && message.gatingScores && (
+                    <div className="mb-3">
+                        <GatingBadge scores={message.gatingScores} winner={message.adapter} />
                     </div>
                 )}
 
