@@ -1,0 +1,150 @@
+{"question": "Write a Python function that returns the second largest unique number in a list. If it does not exist, return None.", "domain": "code"}
+{"question": "Write a Python function that groups a list of strings by their first character, case-insensitively.", "domain": "code"}
+{"question": "Write a Python function that takes a list of dictionaries representing employees with 'name' and 'salary' and returns the average salary.", "domain": "code"}
+{"question": "Write a Python function that checks whether a string has balanced parentheses, brackets, and braces.", "domain": "code"}
+{"question": "Write a Python function that merges two dictionaries. If a key appears in both, sum the numeric values.", "domain": "code"}
+{"question": "Write a Python function that removes duplicate dictionaries from a list while preserving order.", "domain": "code"}
+{"question": "Write a Python function that counts word frequency in a paragraph, ignoring punctuation and case.", "domain": "code"}
+{"question": "Write a Python function that rotates a list to the right by k steps.", "domain": "code"}
+{"question": "Write a Python function that flattens a nested list of integers recursively.", "domain": "code"}
+{"question": "Write a Python function that finds the longest common prefix in a list of strings.", "domain": "code"}
+{"question": "Write a Python function that returns the top k most frequent elements in a list.", "domain": "code"}
+{"question": "Write a Python function that validates whether a string is a valid IPv4 address.", "domain": "code"}
+{"question": "Write a Python function that converts a Roman numeral to an integer.", "domain": "code"}
+{"question": "Write a Python function that finds all pairs in a list that sum to a target value.", "domain": "code"}
+{"question": "Write a Python function that returns True if two strings are anagrams, ignoring spaces and capitalization.", "domain": "code"}
+{"question": "Write a Python function that computes the running sum of a list of numbers.", "domain": "code"}
+{"question": "Write a Python function that transposes a matrix represented as a list of lists.", "domain": "code"}
+{"question": "Write a Python function that finds the missing number from a list containing numbers 1 through n with one missing.", "domain": "code"}
+{"question": "Write a Python function that returns the intersection of two lists including duplicate counts.", "domain": "code"}
+{"question": "Write a Python function that sorts a list of tuples by the second element, then the first.", "domain": "code"}
+{"question": "Write a Python function that parses a CSV line into fields, assuming no escaped commas.", "domain": "code"}
+{"question": "Write a Python function that determines whether a number is a palindrome without converting it to a string.", "domain": "code"}
+{"question": "Write a Python function that finds the first non-repeating character in a string.", "domain": "code"}
+{"question": "Write a Python function that compresses a string using run-length encoding.", "domain": "code"}
+{"question": "Write a Python function that expands a run-length encoded string like 'a3b2' into 'aaabb'.", "domain": "code"}
+{"question": "Write a Python function that finds the maximum profit from a single buy and sell of stock prices.", "domain": "code"}
+{"question": "Write a Python function that returns all substrings of a string.", "domain": "code"}
+{"question": "Write a Python function that checks whether one list is a subsequence of another.", "domain": "code"}
+{"question": "Write a Python function that converts a list of key-value tuples into a dictionary, grouping duplicate keys into lists.", "domain": "code"}
+{"question": "Write a Python function that computes the factorial of a number using recursion and handles invalid negative input.", "domain": "code"}
+{"question": "Write a Python function that finds the shortest word in a sentence. Ignore punctuation.", "domain": "code"}
+{"question": "Write a Python function that counts how many vowels appear in each word of a list.", "domain": "code"}
+{"question": "Write a Python function that removes all None values from a nested dictionary recursively.", "domain": "code"}
+{"question": "Write a Python function that returns the symmetric difference of two sets represented as lists.", "domain": "code"}
+{"question": "Write a Python function that determines whether a matrix is diagonal.", "domain": "code"}
+{"question": "Write a Python function that chunks a list into sublists of size n.", "domain": "code"}
+{"question": "Write a Python function that finds duplicate file names in a list and returns their counts.", "domain": "code"}
+{"question": "Write a Python function that simulates a stack using a list and supports push, pop, and peek operations.", "domain": "code"}
+{"question": "Write a Python function that normalizes whitespace in a string so multiple spaces become one.", "domain": "code"}
+{"question": "Write a Python function that finds the kth smallest element in a list.", "domain": "code"}
+{"question": "Write a Python function that returns a dictionary mapping each character in a string to its last index.", "domain": "code"}
+{"question": "Write a Python function that checks if a linked list represented as Python nodes is a palindrome.", "domain": "code"}
+{"question": "Write a Python function that merges overlapping intervals.", "domain": "code"}
+{"question": "Write a Python function that returns the number of connected components in an undirected graph represented as an adjacency list.", "domain": "code"}
+{"question": "Write a Python function that performs binary search on a sorted list and returns the index or -1.", "domain": "code"}
+{"question": "Write a Python function that converts snake_case strings to camelCase.", "domain": "code"}
+{"question": "Write a Python function that evaluates a postfix expression containing integers and +, -, *, /.", "domain": "code"}
+{"question": "Write a Python function that removes comments from a list of source code lines where comments start with '#'.", "domain": "code"}
+{"question": "Write a Python function that finds the most expensive product in a given category from a list of dictionaries with 'name', 'price', and 'category'. Return None if not found.", "domain": "code"}
+{"question": "Write a Python function that schedules tasks by earliest deadline first from a list of dictionaries containing 'task' and 'deadline'.", "domain": "code"}
+{"question": "A tank fills at 12 liters per minute and leaks 3 liters per minute. If it starts with 90 liters, how much water is in the tank after 25 minutes?", "domain": "math"}
+{"question": "If 3 workers can paint 2 walls in 5 hours, how long will 9 workers take to paint 12 similar walls at the same rate?", "domain": "math"}
+{"question": "Solve for x: 3(x - 4) + 5 = 2x + 9.", "domain": "math"}
+{"question": "A train travels 180 miles in 3 hours and then 140 miles in 2 hours. What is its average speed for the whole trip?", "domain": "math"}
+{"question": "A rectangle has perimeter 54 and length 3 more than twice the width. Find its dimensions.", "domain": "math"}
+{"question": "A sum of money grows by 10% in one year and then decreases by 10% the next year. Is the final amount equal to the original? Show the calculation.", "domain": "math"}
+{"question": "If a number is increased by 20% and then decreased by 20%, what is the net percentage change?", "domain": "math"}
+{"question": "A class has 18 boys and 12 girls. What fraction of the class are girls? Express the answer in simplest form.", "domain": "math"}
+{"question": "Find the next number in the sequence: 2, 6, 12, 20, 30, ?", "domain": "math"}
+{"question": "A car travels at 60 mph for 2 hours and 40 mph for 3 hours. What is the average speed?", "domain": "math"}
+{"question": "Solve the system: 2x + y = 11 and x - y = 1.", "domain": "math"}
+{"question": "A shop gives a 25% discount on a jacket originally priced at $80, then adds 8% sales tax. What is the final price?", "domain": "math"}
+{"question": "If 4 pipes can fill 3 identical tanks in 6 hours, how long will 6 pipes take to fill 9 identical tanks?", "domain": "math"}
+{"question": "A number is divided by 5 and then 7 is added to the quotient to get 19. What is the number?", "domain": "math"}
+{"question": "The ratio of red to blue marbles is 3:5. If there are 24 blue marbles, how many red marbles are there?", "domain": "math"}
+{"question": "A cyclist rides 15 miles uphill at 10 mph and returns downhill at 30 mph. What is the average speed for the round trip?", "domain": "math"}
+{"question": "Expand and simplify: (2x + 3)(x - 4).", "domain": "math"}
+{"question": "Factor completely: x^2 - 9x + 20.", "domain": "math"}
+{"question": "If the probability of rain is 0.3 on Saturday and 0.5 on Sunday, what is the probability it rains on at least one day assuming independence?", "domain": "math"}
+{"question": "A recipe uses 2.5 cups of flour for 10 cookies. How much flour is needed for 28 cookies?", "domain": "math"}
+{"question": "A water tank is 40% full. After adding 18 liters, it becomes 70% full. What is the capacity of the tank?", "domain": "math"}
+{"question": "Solve for y: 4y/3 - 5 = 7.", "domain": "math"}
+{"question": "What is the area of a triangle with base 14 and height 9?", "domain": "math"}
+{"question": "A phone battery drops from 100% to 76% in 3 hours at a constant rate. How many hours from full charge until it reaches 20%?", "domain": "math"}
+{"question": "The sum of three consecutive integers is 72. Find the integers.", "domain": "math"}
+{"question": "A shirt costs $36 after a 20% discount. What was the original price?", "domain": "math"}
+{"question": "Find the median of the numbers: 7, 2, 9, 4, 11, 6, 3.", "domain": "math"}
+{"question": "A ladder 10 feet long leans against a wall with its base 6 feet from the wall. How high up the wall does it reach?", "domain": "math"}
+{"question": "Simplify: 5/6 + 7/12.", "domain": "math"}
+{"question": "Multiply and simplify: (3/5) * (10/9).", "domain": "math"}
+{"question": "If f(x) = 2x^2 - 3x + 1, find f(4).", "domain": "math"}
+{"question": "A bag contains 4 red, 5 blue, and 1 green ball. What is the probability of drawing a blue ball?", "domain": "math"}
+{"question": "Find the simple interest on $1200 at 5% per year for 3 years.", "domain": "math"}
+{"question": "A person walks 3 km east and then 4 km north. How far are they from the starting point?", "domain": "math"}
+{"question": "Solve for x: x/4 + x/6 = 10.", "domain": "math"}
+{"question": "A company's revenue increases from $80,000 to $92,000. What is the percentage increase?", "domain": "math"}
+{"question": "If 8 machines make 400 parts in 5 hours, how many parts do 10 machines make in 8 hours at the same rate?", "domain": "math"}
+{"question": "What is the sum of the first 20 positive integers?", "domain": "math"}
+{"question": "A sequence is geometric with first term 3 and common ratio 2. What is the 6th term?", "domain": "math"}
+{"question": "The interior angles of a triangle are in the ratio 2:3:4. Find the angles.", "domain": "math"}
+{"question": "A test has 50 questions worth 2 points each. A student gets 38 correct. What score do they earn?", "domain": "math"}
+{"question": "Find the value of x if 5^(x) = 125.", "domain": "math"}
+{"question": "A circle has radius 7. Find its circumference in terms of pi.", "domain": "math"}
+{"question": "A boat goes 24 miles downstream in 3 hours and the same distance upstream in 6 hours. Find the speed of the boat in still water.", "domain": "math"}
+{"question": "If the cost of 7 notebooks is $17.50, what is the cost of 12 notebooks at the same rate?", "domain": "math"}
+{"question": "Solve the inequality: 2x - 5 > 9.", "domain": "math"}
+{"question": "A box contains 3 defective bulbs and 17 good bulbs. What is the probability of drawing a defective bulb?", "domain": "math"}
+{"question": "Find the range of the data set: 14, 9, 22, 18, 11, 27.", "domain": "math"}
+{"question": "If a population of 800 grows by 12%, what is the new population?", "domain": "math"}
+{"question": "A tank has one pipe filling it in 6 hours and another emptying it in 9 hours. Starting empty, how long will it take to fill 2/3 of the tank?", "domain": "math"}
+{"question": "Patient Case: A 65-year-old man presents with crushing substernal chest pain radiating to the left arm, diaphoresis, and nausea for 45 minutes. What is the most likely diagnosis and what immediate tests and treatments should be considered?", "domain": "medical"}
+{"question": "Patient Case: A 24-year-old woman presents with dysuria, urinary frequency, and urgency without flank pain or fever. What is the most likely diagnosis and initial management?", "domain": "medical"}
+{"question": "Patient Case: A 55-year-old male presents with sudden onset of the worst headache of his life, neck stiffness, and photophobia. What diagnosis must be ruled out first and what immediate diagnostic steps are indicated?", "domain": "medical"}
+{"question": "Patient Case: A 70-year-old smoker presents with acute shortness of breath, pleuritic chest pain, and tachycardia after a long flight. What is the likely differential and what tests are urgent?", "domain": "medical"}
+{"question": "Patient Case: A 30-year-old woman has fatigue, weight gain, constipation, dry skin, and cold intolerance. What is the most likely diagnosis and what laboratory test would you order first?", "domain": "medical"}
+{"question": "Patient Case: A 19-year-old college student presents with fever, severe sore throat, posterior cervical lymphadenopathy, and fatigue. What is the most likely diagnosis and what counseling should be given?", "domain": "medical"}
+{"question": "Patient Case: A 67-year-old man with hypertension develops sudden right-sided weakness and slurred speech 30 minutes ago. What is the emergency concern and what is the immediate next step in evaluation?", "domain": "medical"}
+{"question": "Patient Case: A 45-year-old woman presents with right upper quadrant pain after fatty meals, nausea, and a positive Murphy sign. What is the most likely diagnosis and what imaging is typically first line?", "domain": "medical"}
+{"question": "Patient Case: A 58-year-old man with a history of alcohol use presents with epigastric pain radiating to the back and vomiting. What diagnosis is most likely and what labs would support it?", "domain": "medical"}
+{"question": "Patient Case: A 22-year-old woman presents with lower abdominal pain, cervical motion tenderness, and purulent vaginal discharge. What is the likely diagnosis and why is prompt treatment important?", "domain": "medical"}
+{"question": "Patient Case: A 72-year-old man presents with progressive difficulty starting urination, weak stream, and nocturia. What is the most likely diagnosis and what conditions should still be excluded?", "domain": "medical"}
+{"question": "Patient Case: A 6-year-old child has fever, barking cough, inspiratory stridor, and hoarseness. What is the most likely diagnosis and what is standard initial treatment?", "domain": "medical"}
+{"question": "Patient Case: A 34-year-old woman presents with heat intolerance, weight loss despite increased appetite, tremor, and palpitations. What is the likely diagnosis and what exam finding may also be present?", "domain": "medical"}
+{"question": "Patient Case: A 40-year-old man presents with fever, productive cough, pleuritic chest pain, and crackles in the right lower lung. What is the likely diagnosis and what imaging is commonly used to confirm it?", "domain": "medical"}
+{"question": "Patient Case: A 29-year-old woman has unilateral leg swelling and pain after recent surgery. What diagnosis should be suspected and what imaging test is commonly used first?", "domain": "medical"}
+{"question": "Patient Case: A 50-year-old man presents with black tarry stools and dizziness. What does this suggest and what urgent evaluation is typically needed?", "domain": "medical"}
+{"question": "Patient Case: A 3-year-old child has polyuria, polydipsia, weight loss, and lethargy. What endocrine emergency should be considered and what first labs are critical?", "domain": "medical"}
+{"question": "Patient Case: A 60-year-old woman presents with gradual central vision loss and distortion of straight lines. What condition is possible and what specialty referral is appropriate?", "domain": "medical"}
+{"question": "Patient Case: A 28-year-old woman presents with butterfly facial rash, joint pain, and photosensitivity. What autoimmune disease is suggested and what initial blood test is often ordered?", "domain": "medical"}
+{"question": "Patient Case: A 47-year-old obese patient has daytime sleepiness, loud snoring, and witnessed apneas during sleep. What is the likely diagnosis and how is it commonly confirmed?", "domain": "medical"}
+{"question": "Patient Case: A 33-year-old man presents with severe unilateral eye pain, halos around lights, headache, and nausea. What ophthalmic emergency should be suspected?", "domain": "medical"}
+{"question": "Patient Case: A 75-year-old woman falls and cannot bear weight; her leg is shortened and externally rotated. What is the likely diagnosis and what imaging is immediately required?", "domain": "medical"}
+{"question": "Patient Case: A 42-year-old man presents with recurrent burning epigastric pain relieved by meals. What is the likely diagnosis and what infectious cause is commonly investigated?", "domain": "medical"}
+{"question": "Patient Case: A 61-year-old woman presents with fatigue, pallor, glossitis, and numbness in her feet. What type of deficiency is likely and what labs can confirm it?", "domain": "medical"}
+{"question": "Patient Case: A 27-year-old man has sudden scrotal pain, nausea, and a high-riding testicle. What diagnosis must be assumed until proven otherwise?", "domain": "medical"}
+{"question": "Patient Case: A 36-year-old woman presents with fever, flank pain, nausea, and costovertebral angle tenderness. What is the likely diagnosis and how does it differ from simple cystitis?", "domain": "medical"}
+{"question": "Patient Case: A 68-year-old patient with a history of COPD has worsening dyspnea, increased sputum production, and wheezing. What is the likely diagnosis and what common treatment categories are used?", "domain": "medical"}
+{"question": "Patient Case: A 25-year-old woman presents with amenorrhea, weight loss, bradycardia, and excessive exercise. What broad diagnosis should be considered and what complications should be assessed?", "domain": "medical"}
+{"question": "Patient Case: A 49-year-old man presents with progressive jaundice, dark urine, pale stools, and weight loss. What serious pathology should be considered and what imaging is appropriate?", "domain": "medical"}
+{"question": "Patient Case: A 7-year-old child presents with fever, sore throat, strawberry tongue, and sandpaper-like rash. What is the likely diagnosis and what organism is responsible?", "domain": "medical"}
+{"question": "Patient Case: A 63-year-old man presents with resting tremor, bradykinesia, rigidity, and shuffling gait. What neurodegenerative condition is most likely?", "domain": "medical"}
+{"question": "Patient Case: A 31-year-old woman reports episodic wheezing, chest tightness, and cough worse at night and with exercise. What is the likely diagnosis and what pulmonary test helps confirm it?", "domain": "medical"}
+{"question": "Patient Case: A 46-year-old diabetic patient presents with a painful red swollen foot ulcer and fever. What complication is concerning and what immediate workup is needed?", "domain": "medical"}
+{"question": "Patient Case: A 52-year-old woman presents with severe fatigue, pruritus, and elevated cholestatic liver enzymes. What autoimmune hepatobiliary disease may be considered?", "domain": "medical"}
+{"question": "Patient Case: A 58-year-old man develops sudden tearing chest pain radiating to the back and unequal blood pressures in the arms. What life-threatening diagnosis must be considered?", "domain": "medical"}
+{"question": "Patient Case: A 35-year-old woman presents with diffuse abdominal pain that migrated to the right lower quadrant, fever, and loss of appetite. What is the likely diagnosis and what imaging is often used?", "domain": "medical"}
+{"question": "Patient Case: A 62-year-old smoker has chronic cough, hemoptysis, and unexplained weight loss. What serious diagnosis must be ruled out and what first imaging study is common?", "domain": "medical"}
+{"question": "Patient Case: A 23-year-old presents with fever, neck stiffness, photophobia, and altered mental status. What emergency diagnosis should be suspected and what immediate management principle applies?", "domain": "medical"}
+{"question": "Patient Case: A 54-year-old woman presents with proximal muscle weakness, moon facies, purple striae, and hypertension. What endocrine syndrome is suggested?", "domain": "medical"}
+{"question": "Patient Case: A 44-year-old man has acute monoarticular pain, redness, and swelling of the first metatarsophalangeal joint. What diagnosis is likely and what crystal type is associated with it?", "domain": "medical"}
+{"question": "Patient Case: A 73-year-old woman presents with progressive memory loss affecting daily function. What broad differential should be considered and what reversible causes should be screened for?", "domain": "medical"}
+{"question": "Patient Case: A 29-year-old patient presents with recurrent abdominal pain, bloating, and diarrhea triggered by gluten-containing foods. What diagnosis is possible and what tests support it?", "domain": "medical"}
+{"question": "Patient Case: A 38-year-old woman presents with galactorrhea, amenorrhea, and headaches. What endocrine cause should be considered?", "domain": "medical"}
+{"question": "Patient Case: A 56-year-old man with longstanding reflux now has progressive difficulty swallowing solids. What concerning complication should be considered and what procedure is indicated?", "domain": "medical"}
+{"question": "Patient Case: A 32-year-old presents with fever, diffuse rash, hypotension, and multiorgan symptoms shortly after prolonged tampon use. What diagnosis is likely?", "domain": "medical"}
+{"question": "Patient Case: A 71-year-old patient presents with severe back pain, fever, and neurologic deficits after a recent bloodstream infection. What spinal emergency should be considered?", "domain": "medical"}
+{"question": "Patient Case: A 48-year-old woman reports heavy menstrual bleeding, fatigue, and pica. What common hematologic consequence should be suspected?", "domain": "medical"}
+{"question": "Patient Case: A 66-year-old man presents with calf pain while walking that improves with rest. What vascular diagnosis is most likely and what risk factors matter most?", "domain": "medical"}
+{"question": "Patient Case: A 39-year-old woman presents with episodic vertigo, tinnitus, a feeling of ear fullness, and fluctuating hearing loss. What inner ear disorder is suggested?", "domain": "medical"}
+{"question": "Patient Case: A 57-year-old patient with cirrhosis presents with confusion, sleep reversal, and asterixis. What complication is likely and what precipitating causes should be looked for?", "domain": "medical"}
